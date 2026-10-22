@@ -55,7 +55,7 @@
 
 ## 接口与数据适配
 
-浏览器只发送 `GET /api/resource-occupancies`。开发环境由 [vite.config.ts](../vite.config.ts) 代理到 `http://192.168.0.107:5173`；换环境时修改该代理目标并重启开发服务器。
+浏览器只发送 `GET /api/resource-occupancies`。开发环境由 [vite.config.ts](../vite.config.ts) 代理到 `http://192.168.0.101:5173`；换环境时修改该代理目标并重启开发服务器。
 
 接口需要返回顶层 `units`、`occupancies` 数组。以下为虚构示例：
 

@@ -62,7 +62,7 @@ npm run build:lib
 
 - `/`：导航页；第一个入口 `/original` 保留 `demo/App.vue` 原版示例；第二个入口 `/resources` 使用 `demo/ResourceSchedule.vue`。
 - `demo/main.ts` 按 URL 动态加载页面；导航与排程使用 `demo/workspace.css`，原版示例单独加载原样式。未增加路由或 UI 依赖。
-- 资源页通过 Vite 代理 GET `/api/resource-occupancies`，上游为 `http://192.168.0.107:5173/api/resource-occupancies`；部署到其他服务器时需要配置同样的代理。
+- 资源页通过 Vite 代理 GET `/api/resource-occupancies`，上游为 `http://192.168.0.101:5173/api/resource-occupancies`；部署到其他服务器时需要配置同样的代理。
 - 接口返回 `units` 和 `occupancies`，以 `unitBusinessId` 关联。保留业务 ID 字符串，使用独立数字作为组件任务 ID；时间字段为本地时间。
 - 已确认交互：日/周/月切换、年度汇总、日期导航、资源搜索、状态筛选、详情、拖拽时间/资源、拉伸时长。默认月视图按天绘制（32px/天），周视图为120px/天；改变格宽需重建位置缓存并让任务条重新取坐标。调整只在页面内存中保存，刷新恢复接口数据，不调用后端写接口。
 - `demo/ResourceYearOverview.vue` 显示资源 × 12个月汇总，点击月份或色块进入当月排程。颜色表示占用记录数（非利用率）；跨月记录计入各个相交月份，结束于月初零点不计入下月，全年统计仍按记录计数。搜索、状态与仅看有占用沿用当前筛选，本地编辑/撤销同步更新汇总。

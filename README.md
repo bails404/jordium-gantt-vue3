@@ -25,7 +25,7 @@ npm run dev -- --host 127.0.0.1 --port 13000 --strictPort
 
 打开 [导航页](http://localhost:13000/)、[资源排程](http://localhost:13000/resources) 或 [完整示例](http://localhost:13000/original)。已有本地项目无需再次克隆。
 
-资源页通过 Vite 代理请求 `/api/resource-occupancies`，当前代理目标在 `vite.config.ts` 中配置为 `http://192.168.0.107:5173`，运行时需要能够访问该局域网服务。调整只在本页生效，刷新后恢复接口数据。
+资源页通过 Vite 代理请求 `/api/resource-occupancies`，当前代理目标在 `vite.config.ts` 中配置为 `http://192.168.0.101:5173`，运行时需要能够访问该局域网服务。调整只在本页生效，刷新后恢复接口数据。
 
 阅读 [定制指南：使用、API 示例、部署与同步上游](docs/CUSTOMIZATION.md)、[Fork 变更记录](CHANGELOG.md#fork-unreleased) 和 [测试说明](tests/README.md)。GitHub Pages 的部署限制见 [部署文档](docs/GITHUB-PAGES.md)。
 

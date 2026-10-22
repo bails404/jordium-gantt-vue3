@@ -445,7 +445,7 @@ onBeforeUnmount(() => {
               @taskbar-resize-end="applyAdjustment"
               @resource-drag-end="moveResource"
             >
-              <TaskListColumn prop="name" label="设备 / 资源" :width="278">
+              <TaskListColumn prop="name" label="设备 / 资源">
                 <template #default="{ row }"
                   ><div class="resource-label">
                     <span class="resource-symbol" aria-hidden="true">{{
@@ -903,6 +903,23 @@ input[type='checkbox'] {
 }
 .chart-area :deep(.task-list-container) {
   border-radius: 0;
+}
+.chart-area :deep(.task-list-header),
+.chart-area :deep(.task-list-body-inner) {
+  width: 100%;
+}
+.chart-area :deep(.task-list .col) {
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: none;
+  box-shadow: none;
+}
+.chart-area :deep(.task-row:hover),
+.chart-area :deep(.task-row-hovered) {
+  box-shadow: none !important;
+}
+.chart-area :deep(.task-list-toggle) {
+  box-shadow: 0 1px 2px rgb(34 50 71 / 8%);
 }
 .resource-label {
   display: flex;
