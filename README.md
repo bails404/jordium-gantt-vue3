@@ -2544,6 +2544,7 @@ Controls task bar display content and interaction behavior。
 | `showAvatar`        | `boolean` | `true`  | Whether to show avatar                                    |
 | `showTitle`         | `boolean` | `true`  | Whether to show title text                                |
 | `hideTitleOnOverflow` **Fork** | `boolean` | `false` | Hide a plain inside title entirely unless it fits the visible portion of the bar. Requires `showTitle`; excludes parent bars, outside titles and custom content slots. Hover tooltips remain independently controlled. |
+| `tooltipUnstyled` **Fork** | `boolean` | `false` | With a `taskbar-tooltip` slot, remove the built-in tooltip background, padding, border, shadow and arrow. Position, width and stacking remain managed by the component. Ignored without a custom slot. |
 | `showProgress`      | `boolean` | `true`  | Whether to show progress text                             |
 | `dragThreshold`     | `number`  | `5`     | Drag trigger threshold (pixels)                           |
 | `resizeHandleWidth` | `number`  | `5`     | Resize handle width (pixels), max 15px                    |
@@ -3629,7 +3630,7 @@ Component provides slots support, allowing custom task content rendering。
 
 ##### `taskbar-tooltip` Slot ![v1.9.2](https://img.shields.io/badge/v1.9.2-409EFF?style=flat-square&labelColor=ECF5FF)
 
-Fully replaces the built-in TaskBar hover tooltip content. When used, the built-in tooltip is no longer rendered — the consumer has complete control.
+Replaces the built-in TaskBar hover tooltip content. The component retains its white background, dark text, padding, border, shadow, arrow and stacking by default; no demo or application stylesheet is required. Set `taskBarConfig.tooltipUnstyled: true` only when the slot supplies its own complete appearance. Existing slots that draw their own card should opt into this mode to avoid double padding and borders.
 
 > **Prerequisite**: Requires `:enable-taskbar-tooltip="true"` (enabled by default)
 

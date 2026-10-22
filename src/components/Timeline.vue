@@ -7043,7 +7043,7 @@ const handleAddSuccessor = (task: Task) => {
       class="task-hover-tooltip"
       :class="[
         `placement-${tooltipState.placement}`,
-        { 'tooltip-custom-slot': $slots['taskbar-tooltip'] },
+        { 'tooltip-unstyled': $slots['taskbar-tooltip'] && props.taskBarConfig?.tooltipUnstyled },
       ]"
       :style="{
         left: `${tooltipState.position.left}px`,
@@ -7156,7 +7156,10 @@ const handleAddSuccessor = (task: Task) => {
         </div>
       </template>
       <!-- 箭头：最后渲染，确保层叠在内容之上，并正确超出容器边缘 -->
-      <span class="tt-arrow" />
+      <span
+        v-if="!($slots['taskbar-tooltip'] && props.taskBarConfig?.tooltipUnstyled)"
+        class="tt-arrow"
+      />
     </div>
   </Teleport>
 
@@ -7199,15 +7202,20 @@ const handleAddSuccessor = (task: Task) => {
 /* ─── Singleton Tooltip CSS ─────────────────────────────────────────────────── */
 .task-hover-tooltip {
   position: fixed;
+  box-sizing: border-box;
   width: 250px; /* 固定宽度，与 JS TW=250 保持一致 */
-  background-color: var(--tt-color, rgba(0, 0, 0, 0.85));
-  color: white;
-  padding: 10px 14px;
-  border-radius: 6px;
+  background: #fff;
+  color: #223247;
+  padding: 12px 14px;
+  border: 1px solid #dce4ec;
+  border-top: 3px solid var(--tt-color, #537eb4);
+  border-radius: 8px;
   font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
   /* Teleport 到 body 后，独立引用组件时可能没有全局主题变量。 */
   z-index: var(--gantt-z-overlay, 9999);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 6px 24px rgb(34 50 71 / 16%);
   pointer-events: none;
   overflow: visible; /* 允许箭头伸出容器边缘 */
 }
@@ -7307,10 +7315,13 @@ const handleAddSuccessor = (task: Task) => {
   border-right: 0;
 }
 
-/* 自定义 slot 时容器样式：保留 250px 宽度使箭头偏移数学一致，但移除背景和边距 */
-.task-hover-tooltip.tooltip-custom-slot {
+/* 仅显式选择无样式模式时移除外观；定位、宽度和层级仍由组件管理。 */
+.task-hover-tooltip.tooltip-unstyled {
   background: transparent;
+  color: inherit;
   padding: 0;
+  border: 0;
+  border-radius: 0;
   box-shadow: none;
 }
 
@@ -7324,7 +7335,7 @@ const handleAddSuccessor = (task: Task) => {
   font-weight: 600;
   font-size: 13px;
   margin-bottom: 4px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.3);
+  border-bottom: 1px solid #dce4ec;
   padding-bottom: 4px;
 }
 
@@ -7349,7 +7360,7 @@ const handleAddSuccessor = (task: Task) => {
 
 /* 子任务溢出警告行 */
 .hover-tooltip-overflow-warning {
-  color: #ffa0a0;
+  color: #b42318;
   font-size: 11px;
   border-top: 1px solid rgba(255, 160, 160, 0.3);
   padding-top: 4px;

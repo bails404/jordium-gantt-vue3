@@ -94,6 +94,7 @@
 | `focusDate` | `Date \| string` / `undefined` | 请求将日期居中，等待时间轴布局就绪后统一定位。不传保留上游自动定位。首次定位及切换刻度/格宽直接定位，同刻度、同格宽的后续日期导航平滑滚动。 |
 | `resourceTaskBufferScreens` | `number` / `undefined` | 有限非负数；资源视图的 hour/day/month 刻度下，左右各增加指定屏数的绘制缓冲。`2` 约为当前一屏加左右各两屏；`0` 不加外围缓冲；不传、负数或非有限值使用上游策略。 |
 | `taskBarConfig.hideTitleOnOverflow` | `boolean` / `false` | 开启 `showTitle` 时，普通任务条内标题完整显示或整体隐藏；按可见区域扣除内边距、手柄等空间判断。不处理父任务、条外标题、自定义内容插槽，也不自动开启提示。 |
+| `taskBarConfig.tooltipUnstyled` | `boolean` / `false` | 默认由组件为普通提示和自定义 `taskbar-tooltip` 内容提供白底深色外观，不依赖资源 demo 的 CSS。设置为 `true` 且有自定义插槽时移除背景、内边距、边框、阴影和箭头，保留定位、宽度和层级；自行绘制卡片的旧插槽应开启此项。 |
 
 缓冲区接近边缘才重算，并与现有纵向虚拟化配合；不代表一次性渲染全部任务。屏数越大通常越占用 DOM 和内存，应结合数据量选择。
 

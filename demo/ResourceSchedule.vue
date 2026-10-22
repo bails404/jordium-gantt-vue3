@@ -1062,20 +1062,9 @@ input[type='checkbox'] {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  width: 100%;
-  padding: 12px 14px;
-  border: 1px solid #dce4ec;
-  border-top: 3px solid var(--tt-color, #537eb4);
-  border-radius: 8px;
-  background: #fff;
-  color: #223247;
-  box-shadow: 0 6px 24px rgb(34 50 71 / 16%);
-  font-size: 12px;
-  line-height: 1.5;
-  overflow-wrap: anywhere;
 }
 .occupancy-tooltip small {
-  color: #617285;
+  opacity: 0.7;
 }
 .detail-dialog {
   width: min(470px, calc(100vw - 32px));

@@ -4,6 +4,7 @@ export interface TaskBarConfig {
   showAvatar?: boolean // 是否展示头像，默认 true
   showTitle?: boolean // 是否展示标题文字，默认 true
   hideTitleOnOverflow?: boolean // 条内普通标题放不下时整体隐藏，默认 false；不影响自定义内容插槽
+  tooltipUnstyled?: boolean // 自定义 taskbar-tooltip 插槽完全接管外观（含箭头），默认 false；无插槽时不生效
   showProgress?: boolean // 是否展示进度文字，默认 true
   dragThreshold?: number // 拖拽触发阈值（像素），默认 5px
   resizeHandleWidth?: number // 拉伸手柄宽度（像素），默认 5px，最大 15px
@@ -26,6 +27,7 @@ export const DEFAULT_TASK_BAR_CONFIG: TaskBarConfig = {
   showAvatar: true,
   showTitle: true,
   hideTitleOnOverflow: false,
+  tooltipUnstyled: false,
   showProgress: true,
   dragThreshold: 5,
   resizeHandleWidth: 5,

@@ -2687,6 +2687,7 @@ const taskListConfig = computed<TaskListConfig>(() => ({
 | `showAvatar`        | `boolean` | `true`  | 是否展示头像                    |
 | `showTitle`         | `boolean` | `true`  | 是否展示标题文字                |
 | `hideTitleOnOverflow` **Fork** | `boolean` | `false` | 普通条内标题只有在任务条可见部分足够时才完整显示，否则整体隐藏。要求开启 `showTitle`；不处理父任务、条外标题或自定义内容插槽。悬停提示仍由原有配置控制。 |
+| `tooltipUnstyled` **Fork** | `boolean` | `false` | 配合 `taskbar-tooltip` 插槽使用时，移除组件提供的背景、内边距、边框、阴影和箭头，由插槽完全接管外观；定位、宽度和层级仍由组件管理。无自定义插槽时不生效。 |
 | `showProgress`      | `boolean` | `true`  | 是否展示进度文字                |
 | `dragThreshold`     | `number`  | `5`     | 拖拽触发阈值（像素）            |
 | `resizeHandleWidth` | `number`  | `5`     | 拉伸手柄宽度（像素），最大 15px |
@@ -3772,7 +3773,9 @@ const month = formatMonth(3)  // '3月' (zh-CN) 或 '03' (en-US)
 
 ##### `taskbar-tooltip` 插槽 ![v1.9.2](https://img.shields.io/badge/v1.9.2-409EFF?style=flat-square&labelColor=ECF5FF)
 
-用于完全替换 TaskBar 的内置悬停 Tooltip 内容。启用后内置样式不再渲染，由消费方完全控制。
+**Fork 默认外观**：插槽只替换内容，组件统一提供白底深色文字、内边距、边框、阴影、箭头和层级，不依赖 demo 或业务页面样式。仅在需要完全自绘时设置 `taskBarConfig.tooltipUnstyled: true`；已有自行绘制卡片的插槽应开启此选项，避免重复边框和内边距。
+
+用于替换 TaskBar 的内置悬停 Tooltip 内容。默认保留组件外观，消费方负责内容和内容布局。
 
 > **前提条件**：需设置 `:enable-taskbar-tooltip="true"`（默认已开启）
 
