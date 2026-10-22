@@ -1,4 +1,31 @@
-# <img src="public/assets/jordium-gantt-vue3-logo.svg" alt="jordium-gantt-vue3 logo" width="32" style="vertical-align:middle;margin-right:8px;" /> jordium-gantt-vue3
+# jordium-gantt-vue3 · 资源排程定制版（中文参考）
+
+本仓库是 [bails404 维护的 Fork](https://github.com/bails404/jordium-gantt-vue3)，基于 [Jordium 原项目](https://github.com/nelson820125/jordium-gantt-vue3) **1.14.5 / `b46bec1`**。定制代码位于 [`codex/resource-schedule`](https://github.com/bails404/jordium-gantt-vue3/tree/codex/resource-schedule) 分支；`master` 保留上游基线。
+
+本 Fork 增加了精简资源排程页面、日/周/月切换、年度记录数汇总和本地排程调整，并优化日期导航、滚动同步、缓冲绘制和任务标题。拖拽、资源视图、虚拟滚动等基础能力来自原组件。
+
+## 启动与文档入口
+
+使用 Node.js 20 或以上版本，在新目录中执行：
+
+```bash
+git clone --branch codex/resource-schedule https://github.com/bails404/jordium-gantt-vue3.git
+cd jordium-gantt-vue3
+npm ci
+npm run dev -- --host 127.0.0.1 --port 13000 --strictPort
+```
+
+打开 [导航页](http://localhost:13000/)、[资源排程](http://localhost:13000/resources) 或 [完整示例](http://localhost:13000/original)。已有本地项目无需再次克隆。
+
+资源页需要访问局域网接口，代理目标在 `vite.config.ts` 中配置；拖动、拉伸、跨资源调整仅保存在页面内存，刷新恢复接口数据。
+
+- [定制指南](docs/CUSTOMIZATION.md)：页面使用、接口格式、新增 API 示例、构建与维护。
+- [Fork 变更记录](CHANGELOG.md#fork-unreleased)：组件优化与业务页面扩展。
+- [测试说明](tests/README.md) / [部署说明](docs/GITHUB-PAGES.md)。
+
+## 组件参考
+
+以下保留上游介绍和组件文档，新增 API 标记为 **Fork**。下方 npm 包、版本徽章、官网和在线演示属于上游，**安装官方 npm 包不会获得本 Fork 的修改**。本 Fork 尚未发布独立 npm 包；原作者版权与 MIT 许可证保留在 [LICENSE](LICENSE)。
 
 <p align="center">
   <a href="https://www.npmjs.com/package/jordium-gantt-vue3">
@@ -28,8 +55,8 @@
 </p>
 
 <p align="center">
-  <a href="./README.md">中文</a> | 
-  <a href="./README-EN.md">English</a> | 
+  <a href="./README-zh-CN.md">中文</a> |
+  <a href="./README.md">English API</a> |
   <a href="./CHANGELOG.md">更新日志</a>
 </p>
 
@@ -116,6 +143,8 @@ jordium-gantt-vue3 是一个现代化的 Vue3 甘特图组件，内置资源视�
 ---
 
 ## 📦 安装
+
+以下命令安装的是上游发布包。体验本 Fork 请使用上方源码启动方式；集成到其他应用前请阅读[定制源码复用说明](docs/CUSTOMIZATION.md#reuse)。
 
 使用你喜欢的包管理器安装：
 
@@ -224,6 +253,15 @@ npm run dev
 `GanttChart` 是组件库的核心入口，提供了完整的甘特图功能。
 
 #### 基础属性
+
+标记 **Fork** 的配置需要本定制源码版本；完整示例和边界条件见[新增 API 使用说明](docs/CUSTOMIZATION.md#api)。
+
+本 Fork 新增的两个顶层属性：
+
+| 属性 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `focusDate` **Fork** | `Date \| string` | `undefined` | 在布局就绪后将指定日期定位到时间轴中央；不传时保留上游自动定位策略。 |
+| `resourceTaskBufferScreens` **Fork** | `number` | `undefined` | 左右各预绘制多少屏；须为有限非负数，仅用于资源视图的 hour/day/month 刻度。不传保留上游策略，当前资源页设为 `2`。 |
 
 | 属性名                      | 类型                                                                                      | 默认值  | 说明                                                           |
 | --------------------------- | ----------------------------------------------------------------------------------------- | ------- | -------------------------------------------------------------- |
@@ -463,6 +501,13 @@ npm run dev
 | `onCollapseAll`      | `() => void`                         | 工具栏"全部折叠"按钮点击回调                             |
 
 #### 组件事件（Events）
+
+本 Fork 新增日期事件：
+
+| 事件 | 参数 | 说明 |
+| --- | --- | --- |
+| `viewport-date-change` | `Date` | 提供 `focusDate` 时，在 hour/day/month 刻度下，横向滚动停稳后报告视口中央日期。主动定位期间不反向同步，拖拽期间延后通知；不要直接把此事件回写为新的 `focusDate`。 |
+| `focus-date-settled` | `Date` | 主动日期定位结束后报告请求的目标日期，包括原有 `scrollToDate` 方法调用。时间轴边界可能限制实际居中位置，此事件不代表实际视口中央日期。 |
 
 完整的事件说明请分别参考：
 
@@ -2641,6 +2686,7 @@ const taskListConfig = computed<TaskListConfig>(() => ({
 | ------------------- | --------- | ------- | ------------------------------- |
 | `showAvatar`        | `boolean` | `true`  | 是否展示头像                    |
 | `showTitle`         | `boolean` | `true`  | 是否展示标题文字                |
+| `hideTitleOnOverflow` **Fork** | `boolean` | `false` | 普通条内标题只有在任务条可见部分足够时才完整显示，否则整体隐藏。要求开启 `showTitle`；不处理父任务、条外标题或自定义内容插槽。悬停提示仍由原有配置控制。 |
 | `showProgress`      | `boolean` | `true`  | 是否展示进度文字                |
 | `dragThreshold`     | `number`  | `5`     | 拖拽触发阈值（像素）            |
 | `resizeHandleWidth` | `number`  | `5`     | 拉伸手柄宽度（像素），最大 15px |

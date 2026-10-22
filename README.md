@@ -1,4 +1,37 @@
-# <img src="public/assets/jordium-gantt-vue3-logo.svg" alt="jordium-gantt-vue3 logo" width="32" style="vertical-align:middle;margin-right:8px;" /> jordium-gantt-vue3
+# jordium-gantt-vue3 · 资源排程定制版
+
+这是 [bails404/jordium-gantt-vue3](https://github.com/bails404/jordium-gantt-vue3) 维护的 Fork，基于 [Jordium 原项目](https://github.com/nelson820125/jordium-gantt-vue3) **1.14.5 / `b46bec1`** 开发。保留原组件与完整示例，增加车间资源排程页面，并改进日期导航、滚动同步、任务绘制和标题显示。
+
+**定制代码位于 [`codex/resource-schedule`](https://github.com/bails404/jordium-gantt-vue3/tree/codex/resource-schedule) 分支，`master` 保留上游基线。** 官方 npm 包、下方版本徽章与在线演示属于上游，不包含本 Fork 的定制功能；本 Fork 尚未发布独立 npm 包。
+
+## 本 Fork 的主要改动
+
+- `/` 导航页、`/original` 原版完整示例、`/resources` 精简资源排程页。
+- 接入资源占用接口，支持日/周/月视图、搜索、状态筛选、统计、详情，以及页面内拖拽、拉伸和跨资源调整。
+- 新增资源 × 12 个月的年度汇总，可点击进入月份；颜色表示记录数，不是利用率。
+- 日期定位与手动滚动联动；横向缓冲绘制与计算缓存；修复滚动回抖、任务条闪失和提示遮挡。
+- 新增 `focusDate`、`resourceTaskBufferScreens`、`taskBarConfig.hideTitleOnOverflow` 配置及两个日期事件。
+
+## 启动定制示例
+
+使用 Node.js 20 或以上版本，在新目录中执行：
+
+```bash
+git clone --branch codex/resource-schedule https://github.com/bails404/jordium-gantt-vue3.git
+cd jordium-gantt-vue3
+npm ci
+npm run dev -- --host 127.0.0.1 --port 13000 --strictPort
+```
+
+打开 [导航页](http://localhost:13000/)、[资源排程](http://localhost:13000/resources) 或 [完整示例](http://localhost:13000/original)。已有本地项目无需再次克隆。
+
+资源页通过 Vite 代理请求 `/api/resource-occupancies`，当前代理目标在 `vite.config.ts` 中配置为 `http://192.168.0.107:5173`，运行时需要能够访问该局域网服务。调整只在本页生效，刷新后恢复接口数据。
+
+阅读 [定制指南：使用、API 示例、部署与同步上游](docs/CUSTOMIZATION.md)、[Fork 变更记录](CHANGELOG.md#fork-unreleased) 和 [测试说明](tests/README.md)。GitHub Pages 的部署限制见 [部署文档](docs/GITHUB-PAGES.md)。
+
+## 组件参考 / Component reference
+
+以下保留上游英文介绍、致谢及组件文档，新增 API 标记为 **Fork**。中文参考见 [README-zh-CN.md](README-zh-CN.md)。许可证及原作者版权声明保留在 [LICENSE](LICENSE)。
 
 <p align="center">
   <a href="https://www.npmjs.com/package/jordium-gantt-vue3">
@@ -28,8 +61,8 @@
 </p>
 
 <p align="center">
-  <a href="./README.md">中文</a> | 
-  <a href="./README-EN.md">English</a> | 
+  <a href="./README-zh-CN.md">中文</a> |
+  <a href="./README.md">English API</a> |
   <a href="./CHANGELOG.md">Release Notes</a>
 </p>
 
@@ -116,6 +149,8 @@ jordium-gantt-vue3 is a modern Gantt chart component for Vue3 with built-in Reso
 ---
 
 ## 📦 Installation
+
+The registry package below is the upstream release. For this Fork, run the source checkout described above; see the [customization guide](docs/CUSTOMIZATION.md#reuse) before packaging it for another application.
 
 Install using your preferred package manager:
 
@@ -227,8 +262,12 @@ npm run dev
 
 #### Basic Props
 
+Entries marked **Fork** require this customized source version. See the [usage example and constraints](docs/CUSTOMIZATION.md#api).
+
 | Prop                        | Type      | Default | Description                                                               |
 | --------------------------- | --------- | ------- | ------------------------------------------------------------------------- |
+| `focusDate` **Fork** | `Date \| string` | `undefined` | Center the timeline on a requested date after layout settles. Omit to retain upstream automatic positioning. |
+| `resourceTaskBufferScreens` **Fork** | `number` | `undefined` | Finite, non-negative horizontal buffer size in screens on each side, for resource view with hour/day/month scales. Omit for the upstream rendering strategy; the resource page uses `2`. |
 | `tasks`                     | `Task[]`  | `[]`    | Array of task data                                                        |
 | `milestones`                | `Task[]`  | `[]`    | Array of milestone data (Note: Type is Task[], must set type='milestone') |
 | `resources` ![v1.9.0](https://img.shields.io/badge/v1.9.0-409EFF?style=flat-square&labelColor=ECF5FF) | `Resource[]` | `[]` | Array of resource data (used in resource planning view) |
@@ -465,6 +504,13 @@ For complete configuration object documentation, see [⚙️ Configuration & Cus
 | `onCollapseAll`      | `() => void`                         | Toolbar "Collapse All" button click callback                                         |
 
 #### Component Events
+
+Fork date events:
+
+| Event | Payload | Description |
+| --- | --- | --- |
+| `viewport-date-change` | `Date` | With `focusDate` supplied, reports the viewport center date after horizontal scrolling settles, on hour/day/month scales. Active navigation is suppressed; synchronization waits for dragging to finish. Do not feed it straight back into `focusDate`. |
+| `focus-date-settled` | `Date` | Reports the requested target date after active positioning settles, including calls to the existing `scrollToDate` method. The viewport may be clamped at timeline boundaries; this is not the actual center-date event. |
 
 For complete event documentation, see:
 
@@ -2497,6 +2543,7 @@ Controls task bar display content and interaction behavior。
 | ------------------- | --------- | ------- | --------------------------------------------------------- |
 | `showAvatar`        | `boolean` | `true`  | Whether to show avatar                                    |
 | `showTitle`         | `boolean` | `true`  | Whether to show title text                                |
+| `hideTitleOnOverflow` **Fork** | `boolean` | `false` | Hide a plain inside title entirely unless it fits the visible portion of the bar. Requires `showTitle`; excludes parent bars, outside titles and custom content slots. Hover tooltips remain independently controlled. |
 | `showProgress`      | `boolean` | `true`  | Whether to show progress text                             |
 | `dragThreshold`     | `number`  | `5`     | Drag trigger threshold (pixels)                           |
 | `resizeHandleWidth` | `number`  | `5`     | Resize handle width (pixels), max 15px                    |

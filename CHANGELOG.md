@@ -1,5 +1,37 @@
 # Changelog
 
+<a id="fork-unreleased"></a>
+
+## Fork — Unreleased / 资源排程定制版
+
+维护仓库：[bails404/jordium-gantt-vue3](https://github.com/bails404/jordium-gantt-vue3)，分支 `codex/resource-schedule`。基于上游 1.14.5（`b46bec1`），首批定制代码提交为 `acadf35`。本节描述 Fork 改动，不是官方 npm 发布；下方版本历史保留上游记录。
+
+### Added / 新增
+
+- 导航页、保留原版示例的 `/original` 入口，以及接入资源占用接口的 `/resources` 页面。
+- 资源搜索、状态筛选、占用统计、详情、本地拖动/拉伸/跨资源调整及撤销；默认显示全部资源。
+- 日/周/月展示模式；独立年度记录数汇总，支持点击月份或色块下钻，跨月任务按相交月份计数。
+- 组件配置 `focusDate`、`resourceTaskBufferScreens`、`taskBarConfig.hideTitleOnOverflow`；事件 `viewport-date-change`、`focus-date-settled`。
+- 日期联动、刻度宽度、标题显隐、接口适配、年度统计、绘制缓冲及滚动同步的回归测试。
+
+### Changed and Fixed / 调整与修复
+
+- 统一日期定位，受控导航保留任务 DOM，扩展时间轴时补偿位置，减少回摆和任务条先消失的问题。
+- 资源页保留完整任务数据；修正早期按选中日期过滤导致手动滚动漏任务的问题，并同步顶部日期与统计。
+- 增加横向绘制缓冲，复用任务区间和布局计算；缓存冲突详情，减少滚动时的重复扫描。
+- 修复左右纵向滚动同步回传及浏览器滚动锚定造成的回抖；每帧只处理最新拖动位置和发生变化的方向。
+- 修复周/月格宽改变后的旧坐标缓存、标题贴边时垂直偏移、悬停/拖动提示层级遮挡。
+- 资源页标题完整显示或整体隐藏，保留悬停和详情；简化样式并增加任务状态、时间背景和年度计数图例。
+- 更新 Fork 身份、启动方式、API、测试、维护和部署说明。使用与边界条件见[定制指南](docs/CUSTOMIZATION.md)。
+
+### Scope / 范围
+
+- 本地调整不调用后端写接口；年度汇总属于业务页面，颜色不代表利用率。
+- 上游已有的拖拽、资源视图及虚拟滚动继续复用。新增配置默认保持原策略，内部修复作用于本分支源码。
+- 验证基线和原有失败项见[测试文档](tests/README.md)。
+
+## Upstream release history / 上游版本历史
+
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),

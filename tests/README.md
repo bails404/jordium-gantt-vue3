@@ -1,5 +1,31 @@
 # 测试文档
 
+## Fork 定制回归
+
+下方保留原有测试说明。本节对应 `codex/resource-schedule` 的资源排程扩展；功能范围见[定制指南](../docs/CUSTOMIZATION.md)。
+
+| 文件 | 主要覆盖内容 |
+| --- | --- |
+| `unit/components/ResourceSchedule.spec.ts` | 日期导航与手动滚动反馈、完整任务保留、筛选、本地调整、月视图和年度下钻 |
+| `unit/components/TaskBarScale.spec.ts` | 同为 day 刻度时，周/月格宽切换后任务条重新定位 |
+| `unit/components/TaskBarTitleFit.spec.ts` | 标题宽度变化、视口两端裁切、关闭选项时的兼容行为及观察器清理 |
+| `unit/utils/resourceOccupancies.spec.ts` | 数据适配、时间处理、年度跨月/跨年计数与零点边界 |
+| `unit/utils/resourceViewportUtils.spec.ts` | 横向缓冲窗口复用与任务时间范围 |
+| `unit/utils/scrollSync.spec.ts` | 纵向滚动同步回传识别 |
+
+```bash
+# 定制功能的针对性回归
+npx vitest run tests/unit/components tests/unit/utils/resourceOccupancies.spec.ts tests/unit/utils/resourceViewportUtils.spec.ts tests/unit/utils/scrollSync.spec.ts
+
+# 全量测试与生产构建
+npm run test:run
+npm run build:demo
+```
+
+最近代码验证记录（2026-10-22）：188 项测试，184 通过、3 跳过、1 失败；生产构建通过。失败项为上游已有的 `unit/utils/conflictUtils.spec.ts` → `detectConflicts` → “应该处理没有资源的任务”（预期 0 个冲突，实际 1 个）。全量测试因此仍返回非零退出码；此记录不能替代后续重新验证，也不能用来忽略新增失败。
+
+涉及真实交互的改动还需在 `/resources` 手工检查：日期按钮与手动滚动是否一致；左右滚轮是否回抖；周/月缩放和拖动是否流畅；短标题、贴边标题及拉伸后的显隐是否正确；悬停、详情、年度下钻和撤销是否正常。检查 `/original` 的基础操作，确认组件修复没有破坏原版演示。
+
 ## 📁 测试结构
 
 ```

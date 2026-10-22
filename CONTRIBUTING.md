@@ -1,5 +1,7 @@
 # 贡献指南 - jordium-gantt-vue3
 
+> 本仓库为 `bails404/jordium-gantt-vue3` 的定制 Fork。定制功能的 PR 以本仓库 `codex/resource-schedule` 为目标；提交给原项目的通用修复应另行整理。下方保留上游社区规范与联系方式，Fork 的启动、API 和同步方式以[定制指南](docs/CUSTOMIZATION.md)为准。
+
 感谢您对 jordium-gantt-vue3 项目的关注！我们欢迎社区的贡献，很高兴您能加入我们。
 
 ## 🌍 多语言版本
@@ -64,7 +66,7 @@
 
 ### 前置要求
 
-- **Node.js**: >= 16.0.0
+- **Node.js**: >= 20.0.0（开发与构建）
 - **npm**: >= 8.0.0（或 yarn >= 1.22.0）
 - **Git**: 最新版本
 
@@ -72,18 +74,14 @@
 
 ```bash
 # 克隆仓库
-git clone https://github.com/nelson820125/jordium-gantt-vue3.git
+git clone --branch codex/resource-schedule https://github.com/bails404/jordium-gantt-vue3.git
 cd jordium-gantt-vue3
 
 # 安装依赖
-npm install
+npm ci
 
 # 启动开发服务器
-npm run dev
-
-# 打开另一个终端运行演示
-cd demo
-npm run dev
+npm run dev -- --host 127.0.0.1 --port 13000 --strictPort
 ```
 
 ### 可用脚本
@@ -98,15 +96,15 @@ npm run build            # 生产环境构建
 npm run build:lib        # 构建 npm 包
 
 # 质量保证
-npm run lint             # 运行 ESLint
-npm run lint:fix         # 修复 ESLint 问题
+npm run lint:check       # 运行 ESLint，只检查
+npm run lint             # 运行 ESLint 并自动修复
 npm run type-check       # TypeScript 类型检查
 npm run format           # 使用 Prettier 格式化代码
 npm run format:check     # 检查代码格式
 
 # 测试
-npm run test             # 运行单元测试
-npm run test:watch       # 监视模式运行测试
+npm run test:run         # 单次运行全部测试
+npm run test             # 监视模式运行测试
 npm run test:coverage    # 运行测试并生成覆盖率报告
 ```
 
@@ -281,7 +279,7 @@ chore(deps): 更新 vue 到 3.4.0
 ### 提交前
 
 1. **Fork** 仓库
-2. 从 `main` **创建** 功能分支
+2. 从 `codex/resource-schedule` **创建** 功能分支，并以本 Fork 的该分支为 PR 目标
 3. **进行** 变更
 4. 为新功能 **添加** 测试
 5. **更新** 文档
@@ -293,7 +291,7 @@ chore(deps): 更新 vue 到 3.4.0
 - [ ] 代码遵循风格指南
 - [ ] 完成代码自查
 - [ ] 为新功能添加测试
-- [ ] 所有测试通过
+- [ ] 测试没有新增失败，并记录[已知上游基线失败](tests/README.md)
 - [ ] 文档已更新
 - [ ] 无合并冲突
 - [ ] 使用约定式提交格式

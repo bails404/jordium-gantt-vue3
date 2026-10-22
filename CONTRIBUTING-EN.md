@@ -1,5 +1,7 @@
 # Contributing to jordium-gantt-vue3
 
+> This is the customized `bails404/jordium-gantt-vue3` Fork. Target this repository's `codex/resource-schedule` branch for customization PRs; prepare general upstream fixes separately. Upstream community guidance and contacts are retained below. See the [customization guide (Chinese)](docs/CUSTOMIZATION.md) for Fork setup, API additions and upstream synchronization.
+
 Thank you for your interest in contributing to jordium-gantt-vue3! We welcome contributions from the community and are pleased to have you join us.
 
 ## 🌍 Languages
@@ -64,7 +66,7 @@ There are many ways to contribute to jordium-gantt-vue3:
 
 ### Prerequisites
 
-- **Node.js**: >= 16.0.0
+- **Node.js**: >= 20.0.0 for development and builds
 - **npm**: >= 8.0.0 (or yarn >= 1.22.0)
 - **Git**: Latest version
 
@@ -72,18 +74,14 @@ There are many ways to contribute to jordium-gantt-vue3:
 
 ```bash
 # Clone the repository
-git clone https://github.com/nelson820125/jordium-gantt-vue3.git
+git clone --branch codex/resource-schedule https://github.com/bails404/jordium-gantt-vue3.git
 cd jordium-gantt-vue3
 
 # Install dependencies
-npm install
+npm ci
 
 # Start development server
-npm run dev
-
-# Open another terminal for the demo
-cd demo
-npm run dev
+npm run dev -- --host 127.0.0.1 --port 13000 --strictPort
 ```
 
 ### Available Scripts
@@ -98,15 +96,15 @@ npm run build            # Build for production
 npm run build:lib        # Build library for npm
 
 # Quality Assurance
-npm run lint             # Run ESLint
-npm run lint:fix         # Fix ESLint issues
+npm run lint:check       # Check ESLint without changing files
+npm run lint             # Run ESLint with automatic fixes
 npm run type-check       # TypeScript type checking
 npm run format           # Format code with Prettier
 npm run format:check     # Check code formatting
 
 # Testing
-npm run test             # Run unit tests
-npm run test:watch       # Run tests in watch mode
+npm run test:run         # Run the full suite once
+npm run test             # Run tests in watch mode
 npm run test:coverage    # Run tests with coverage
 ```
 
@@ -281,7 +279,7 @@ chore(deps): update vue to 3.4.0
 ### Before Submitting
 
 1. **Fork** the repository
-2. **Create** a feature branch from `main`
+2. **Create** a feature branch from `codex/resource-schedule` and target that branch in this Fork
 3. **Make** your changes
 4. **Add** tests for new functionality
 5. **Update** documentation
@@ -293,7 +291,7 @@ chore(deps): update vue to 3.4.0
 - [ ] Code follows the style guidelines
 - [ ] Self-review of code completed
 - [ ] Tests added for new functionality
-- [ ] All tests pass
+- [ ] No new test failures; document the [known upstream baseline failure](tests/README.md)
 - [ ] Documentation updated
 - [ ] No merge conflicts
 - [ ] Conventional commit format used
