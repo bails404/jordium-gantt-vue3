@@ -498,6 +498,47 @@ const barRef = ref<HTMLElement | null>(null)
 
 const taskBarNameRef = ref<HTMLElement | null>(null)
 const nameTextWidth = ref(0)
+const taskBarContentRef = ref<HTMLElement | null>(null)
+const titleMeasureRef = ref<HTMLElement | null>(null)
+const fullTitleOnly = computed(
+  () =>
+    barConfig.value.hideTitleOnOverflow &&
+    barConfig.value.showTitle &&
+    !hasContentSlot.value &&
+    !props.isParent &&
+    effectiveTitlePosition.value === 'inside'
+)
+const titleMetrics = ref({ text: -1, box: 0, paddingLeft: 0, paddingRight: 0, borderLeft: 0 })
+
+// 测量元素始终保留自然宽度，不受可见标题的显隐影响；仅在尺寸变化时测量。
+watch(
+  [fullTitleOnly, taskBarContentRef, titleMeasureRef],
+  ([enabled, content, measure], _, onCleanup) => {
+    if (!enabled || !content || !measure) return
+    const observer = new ResizeObserver(entries => {
+      const metrics = { ...titleMetrics.value }
+      for (const entry of entries) {
+        if (entry.target === measure) {
+          metrics.text = entry.contentRect.width
+          nameTextWidth.value = metrics.text
+        } else if (entry.target === content) {
+          const style = getComputedStyle(content)
+          metrics.paddingLeft = parseFloat(style.paddingLeft) || 0
+          metrics.paddingRight = parseFloat(style.paddingRight) || 0
+          metrics.box = entry.contentRect.width + metrics.paddingLeft + metrics.paddingRight
+          metrics.borderLeft = barRef.value
+            ? parseFloat(getComputedStyle(barRef.value).borderLeftWidth) || 0
+            : 0
+        }
+      }
+      titleMetrics.value = metrics
+    })
+    observer.observe(content)
+    observer.observe(measure)
+    onCleanup(() => observer.disconnect())
+  },
+  { flush: 'post' }
+)
 
 // 计算任务条位置和宽度
 const taskBarStyle = computed(() => {
@@ -517,6 +558,8 @@ const taskBarStyle = computed(() => {
   const currentStartDate = tempTaskData.value?.startDate || props.task.startDate
   const currentEndDate = tempTaskData.value?.endDate || props.task.endDate
   const baseStart = parsedBaseStartDate.value
+  // 缓存命中时也依赖格宽，确保同一刻度缩放后重新读取像素位置。
+  const dayWidth = props.dayWidth
 
   // 父级任务自动调度：使用子任务最早开始 / 最晚结束替换显示日期
   const autoScheduleEnabled =
@@ -583,9 +626,9 @@ const taskBarStyle = computed(() => {
       const timeDiffMs = endDateOnly.getTime() - startDateOnly.getTime()
       const daysDiff = Math.round(timeDiffMs / (1000 * 60 * 60 * 24))
       const duration = daysDiff === 0 ? 1 : daysDiff + 1
-      width = duration * props.dayWidth
+      width = duration * dayWidth
     } else {
-      width = props.dayWidth
+      width = dayWidth
     }
     // v1.9.0 资源视图拖拽时，优先使用精确的像素位置
   } else if (viewMode.value === 'resource' && tempTaskPixelLeft.value !== null) {
@@ -2361,7 +2404,7 @@ onMounted(() => {
     if (taskBarNameRef.value) {
       nameResizeObserver = new ResizeObserver(entries => {
         for (const entry of entries) {
-          nameTextWidth.value = entry.contentRect.width
+          if (!fullTitleOnly.value) nameTextWidth.value = entry.contentRect.width
         }
       })
       nameResizeObserver.observe(taskBarNameRef.value)
@@ -3302,13 +3345,53 @@ const shouldShowProgress = computed(() => {
 })
 
 // Helper functions to create type-safe style objects
+const fullTitleLayout = computed(() => {
+  const metrics = titleMetrics.value
+  const left = parseFloat(taskBarStyle.value.left) + metrics.borderLeft
+  const start = props.containerWidth ? Math.max(0, (props.scrollLeft || 0) - left) : 0
+  const end = props.containerWidth
+    ? Math.min(metrics.box, (props.scrollLeft || 0) + props.containerWidth - left)
+    : metrics.box
+  const avatarWidth =
+    barConfig.value.showAvatar &&
+    viewMode.value !== 'resource' &&
+    !(props.showActualTaskbar && hasActualProgress.value) &&
+    avatarList.value.length > 0 &&
+    !shouldRenderAvatarOutside.value
+      ? avatarSize.value +
+        Math.max(0, avatarList.value.length - 1) * Math.round(avatarSize.value * 0.82) +
+        15
+      : 0
+  const minLeft = start + Math.max(metrics.paddingLeft, actualHandleWidth.value + 3) + avatarWidth
+  const maxRight = end - Math.max(metrics.paddingRight, actualHandleWidth.value + 3)
+  return {
+    fits: metrics.text >= 0 && metrics.text + 0.5 <= maxRight - minLeft,
+    left: Math.max(minLeft, Math.min((metrics.box - metrics.text) / 2, maxRight - metrics.text)),
+  }
+})
+
 const getNameStyles = () => {
+  if (fullTitleOnly.value) {
+    return {
+      position: 'absolute',
+      left: `${fullTitleLayout.value.left}px`,
+      top: barConfig.value.showProgress ? '2px' : '50%',
+      transform: barConfig.value.showProgress ? '' : 'translateY(-50%)',
+      visibility: fullTitleLayout.value.fits ? 'visible' : 'hidden',
+    }
+  }
   const styles = stickyStyles.value
   const result: Record<string, string> = {}
 
   if (styles.nameLeft) result.left = styles.nameLeft
   if (styles.namePosition) result.position = styles.namePosition
   if (styles.nameTop) result.top = styles.nameTop
+
+  // 单行标题贴边时仍垂直居中，不能使用标题 + 进度两行布局的顶部偏移。
+  if (styles.namePosition && !barConfig.value.showProgress) {
+    result.top = '50%'
+    result.transform = 'translateY(-50%)'
+  }
 
   return result
 }
@@ -4032,6 +4115,7 @@ const handleAnchorDragEnd = (anchorEvent: {
       <!-- 任务条主体（非父级任务） -->
       <div
         v-if="!isParent"
+        ref="taskBarContentRef"
         class="task-bar-content"
         :style="{
           cursor:
@@ -4123,6 +4207,8 @@ const handleAnchorDragEnd = (anchorEvent: {
             effectiveTitlePosition === 'inside'
           "
           ref="taskBarNameRef"
+          :class="{ 'task-title-fit': fullTitleOnly }"
+          :aria-hidden="fullTitleOnly && !fullTitleLayout.fits ? true : undefined"
           :style="{
             ...getNameStyles(),
             ...(rowHeight < 40 ? { lineHeight: '1', fontSize: '10px' } : {}),
@@ -4137,6 +4223,14 @@ const handleAnchorDragEnd = (anchorEvent: {
           </span>-->
           </div>
         </div>
+
+        <span
+          v-if="fullTitleOnly"
+          ref="titleMeasureRef"
+          class="task-name task-title-measure"
+          aria-hidden="true"
+          >{{ task.name }}</span
+        >
 
         <!-- 进度百分比 - 有实际TaskBar时隐藏 -->
         <div
@@ -4989,6 +5083,26 @@ const handleAnchorDragEnd = (anchorEvent: {
   z-index: 10;
 }
 
+.task-title-fit,
+.task-title-fit .task-name {
+  width: max-content;
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.task-title-measure {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: max-content;
+  max-width: none;
+  visibility: hidden;
+  pointer-events: none;
+  overflow: visible;
+  text-overflow: clip;
+}
+
 /* v1.12.0 标题悬浮在 Bar 上方（taskBarConfig.titlePosition: 'above' 模式，含 parent 任务）
  * 颜色继承自 .task-bar inline style（color: taskStatus.color），与 inside 模式配色一致。
  * 使用 left:50% + translateX(-50%) 以 TaskBar 为基准水平居中。
@@ -5331,7 +5445,8 @@ const handleAnchorDragEnd = (anchorEvent: {
   border-radius: 4px;
   font-size: 12px;
   font-weight: 500;
-  z-index: var(--gantt-z-overlay);
+  /* Teleport 到 body 后也需有默认层级，并高于跨资源拖拽预览。 */
+  z-index: calc(var(--gantt-z-overlay, 9999) + 1);
   box-shadow: 0 2px 12px rgba(0, 123, 255, 0.4);
   pointer-events: none;
   border: 1px solid rgba(255, 255, 255, 0.2);
@@ -5344,7 +5459,7 @@ const handleAnchorDragEnd = (anchorEvent: {
   opacity: 0.5;
   border-radius: 4px;
   border: 2px dashed rgba(255, 255, 255, 0.8);
-  z-index: var(--gantt-z-overlay);
+  z-index: var(--gantt-z-overlay, 9999);
   pointer-events: none;
   /* v1.9.0 不使用transform居中，直接定位保持时间对齐 */
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);

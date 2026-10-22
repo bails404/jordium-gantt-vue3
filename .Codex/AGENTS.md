@@ -1,0 +1,53 @@
+# 项目说明
+
+- 上游仓库：https://github.com/nelson820125/jordium-gantt-vue3
+- 本地目录：`E:\Project\GitHub\gantt-vue3`
+- 初始化日期：2026-10-22；基线版本：1.14.5，master 分支，提交 b46bec1。
+- 当前目标：保留原版 demo，并提供接入车间占用接口的精简资源排程页；后续定制开发前先确认功能范围、预期行为和边界条件。
+
+## 技术栈与目录
+
+- Vue 3、TypeScript、Vite；开发/构建需 Node.js >= 20，本机初始化使用 Node.js 24.6.0、npm 11.5.1。
+- `src/`：组件库源码；`src/components/GanttChart.vue` 为甘特图主组件，`src/index.ts` 为库入口。
+- `demo/`：源码演示，`main.ts` 直接引用 `../src/index`，`App.vue` 为主要演示页面，JSON 文件提供样例数据。
+- `npm-demo/`、`npm-webpack-demo/`：独立的包集成示例，不是当前启动入口。
+- `tests/`：Vitest 测试，使用 happy-dom；`README-zh-CN.md`：中文使用说明。
+
+## 常用命令（在项目根目录执行）
+
+```powershell
+npm ci
+npm run dev -- --host 127.0.0.1 --port 13000 --strictPort
+npm run test:run
+npm run build:demo
+npm run build:lib
+```
+
+- 本地 demo 地址：http://127.0.0.1:13000/ 。端口配置位于 `vite.config.ts`。
+- 按现有 package-lock.json 安装依赖；未经需求确认，不主动升级依赖或修改业务功能。
+- 修改前先阅读相关源码，遵循现有 2 空格缩进、单引号、无分号的格式。
+- 按改动范围运行验证，区分上游已有问题与本次修改造成的问题；仅在用户要求时提交 Git。
+
+## 初始化验证
+
+- `npm ci` 安装成功；浏览器验证任务、资源、日历、资源利用率四种视图可切换，检查时无控制台错误或警告。
+- 原版源码测试基线：156 通过、1 失败、3 跳过。失败项为 `tests/unit/utils/conflictUtils.spec.ts` 的“应该处理没有资源的任务”（第 490 行，预期 0 个冲突，实际 1 个）；未修改业务源码。
+- 首次后台服务 PID：379392（仅用于本次运行）；日志位于 `.git/demo.stdout.log`、`.git/demo.stderr.log`，测试输出位于 `.git/baseline-tests.log`。重启后 PID 会改变。
+
+## 本地页面与资源接口
+
+- `/`：导航页；第一个入口 `/original` 保留 `demo/App.vue` 原版示例；第二个入口 `/resources` 使用 `demo/ResourceSchedule.vue`。
+- `demo/main.ts` 按 URL 动态加载页面；导航与排程使用 `demo/workspace.css`，原版示例单独加载原样式。未增加路由或 UI 依赖。
+- 资源页通过 Vite 代理 GET `/api/resource-occupancies`，上游为 `http://192.168.0.107:5173/api/resource-occupancies`；部署到其他服务器时需要配置同样的代理。
+- 接口返回 `units` 和 `occupancies`，以 `unitBusinessId` 关联。保留业务 ID 字符串，使用独立数字作为组件任务 ID；时间字段为本地时间。
+- 已确认交互：日/周/月切换、年度汇总、日期导航、资源搜索、状态筛选、详情、拖拽时间/资源、拉伸时长。默认月视图按天绘制（32px/天），周视图为120px/天；改变格宽需重建位置缓存并让任务条重新取坐标。调整只在页面内存中保存，刷新恢复接口数据，不调用后端写接口。
+- `demo/ResourceYearOverview.vue` 显示资源 × 12个月汇总，点击月份或色块进入当月排程。颜色表示占用记录数（非利用率）；跨月记录计入各个相交月份，结束于月初零点不计入下月，全年统计仍按记录计数。搜索、状态与仅看有占用沿用当前筛选，本地编辑/撤销同步更新汇总。
+- 默认显示全部资源（包括所选时段没有占用的资源），切换日期不增删资源行；用户可按需开启“仅看有占用”。任务条标题使用“状态 + 数量”，接口没有提供业务任务名称。
+- 资源页开启 `taskBarConfig.hideTitleOnOverflow`：普通条内标题仅在可见区域足够时完整显示，否则整体隐藏；保留悬停提示和详情。通过 ResizeObserver 缓存文字自然宽度与内容区宽度，滚动时只计算裁切后的可用空间。默认关闭，不影响原版示例与自定义内容插槽。
+- `demo/resourceOccupancies.ts` 负责接口适配。周视图拖拽事件仅含日期，适配层保留起止时分；日视图使用组件小时刻度，传入空格分隔的日期时间以保持拖拽时长。
+- 资源页使用 `GanttChart.focusDate` 统一日期定位：Timeline 合并日期/布局更新后仅滚动一次；不要再在页面追加延迟 `scrollToDate` 来覆盖组件自动定位。未传 `focusDate` 的原版示例保留自动定位今天。
+- 资源页传入完整任务数据，日期仅参与定位与统计，默认模式下切换日期保持资源数组和任务对象不变；状态/搜索筛选及“仅看有占用”仍按用户选择生效。已移除旧的切天任务合并/清理逻辑。
+- 资源页设置 `resourceTaskBufferScreens=2`：小时/日刻度按视口左右各两屏预绘制，接近缓冲边界才更新；与纵向资源虚拟化配合，复用时间区间及资源车道布局。未传入该参数时保留原版渲染策略。
+- 手动横向滚动停稳后通过 `viewport-date-change` 按视口中央日期同步顶部日期、资源和统计；筛选日期与主动 `focusDate` 请求分开，防止回滚。空日期保留时间轴，拖拽期间延后同步。
+- 纵向滚动同步使用 `createScrollSyncGuard` 记录目标位置，在延迟的原生 scroll 事件中识别同步回传；不要用微任务提前清除同步标记。两侧虚拟滚动容器禁用 `overflow-anchor`，避免浏览器自动补偿位置造成回抖。
+- 时间轴手动平移每帧只处理最新鼠标位置，仅写入发生移动的方向；纵向统一通过 scroll 事件同步，松手前提交末帧。冲突详情随任务/冲突集合变化计算并缓存，不能在横向滚动重绘时逐任务重新扫描。

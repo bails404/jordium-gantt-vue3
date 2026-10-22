@@ -2,6 +2,7 @@ import type { Ref } from 'vue'
 import type { Task } from '../../../../models/classes/Task'
 import { updateParentTasksData, getAllTasks } from './useTaskParentCalculation'
 import type { ComputedRef } from 'vue'
+import { createScrollSyncGuard } from '../../../../utils/scrollSync'
 
 /**
  * TaskList 事件处理逻辑
@@ -147,7 +148,7 @@ export function useTaskListEventHandlers(options: TaskListEventHandlersOptions) 
   // ==================== 滚动同步事件 ====================
 
   // 滚动同步标志位：防止 Timeline → TaskList 写入后反向再次派发（2跳链路优化）
-  let _isSyncingScrollFromTimeline = false
+  const timelineScrollSync = createScrollSyncGuard()
 
   const handleTaskListScroll = (event: Event) => {
     const target = event.target as HTMLElement
@@ -157,7 +158,7 @@ export function useTaskListEventHandlers(options: TaskListEventHandlersOptions) 
     taskListScrollTop.value = scrollTop
 
     // 由 Timeline → TaskList 同步写入触发时，不再反向派发，避免 2 跳循环
-    if (_isSyncingScrollFromTimeline) return
+    if (timelineScrollSync.isEcho(scrollTop)) return
 
     // 滚动时关闭所有右键菜单
     window.dispatchEvent(new CustomEvent('close-all-taskbar-menus'))
@@ -175,14 +176,8 @@ export function useTaskListEventHandlers(options: TaskListEventHandlersOptions) 
 
     taskListScrollTop.value = scrollTop
 
-    if (taskListBodyElement && Math.abs(taskListBodyElement.scrollTop - scrollTop) > 1) {
-      // 设置标志位：当前是由 Timeline 触发的同步写入
-      // 防止 handleTaskListScroll 被触发后反向再次派发事件（2跳链路）
-      _isSyncingScrollFromTimeline = true
-      taskListBodyElement.scrollTop = scrollTop
-      Promise.resolve().then(() => {
-        _isSyncingScrollFromTimeline = false
-      })
+    if (taskListBodyElement) {
+      timelineScrollSync.write(taskListBodyElement, scrollTop)
     }
   }
 

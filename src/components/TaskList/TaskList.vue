@@ -590,6 +590,7 @@ defineExpose({
   width: 100%;
   flex: 1;
   overflow: auto;
+  overflow-anchor: none; /* 虚拟列表替换行时不允许浏览器自动回调滚动位置 */
 
   scrollbar-width: thin;
   scrollbar-color: var(--gantt-scrollbar-thumb) transparent;

@@ -23,6 +23,8 @@ import { useViewMode } from '../composables/useViewMode' // v1.9.9 视图模式�
 import type { TaskBarConfig } from '../models/configs/TaskBarConfig'
 import { getPredecessorIds } from '../utils/predecessorUtils'
 import { getEffectiveEndDateOnly } from '../utils/dateBoundaryUtils'
+import { getBufferedWindow, getResourceTaskInterval } from '../utils/resourceViewportUtils'
+import { createScrollSyncGuard } from '../utils/scrollSync'
 import { perfMonitor } from '../utils/perfMonitor'
 import { perfMonitor2 } from '../utils/perfMonitor2' // v1.9.6 性能诊断工具
 import type { Task } from '../models/classes/Task'
@@ -49,6 +51,9 @@ interface Props {
   milestones?: Milestone[]
   startDate: Date
   endDate: Date
+  // 提供时接管自动日期定位；未提供时维持原版自动定位今天的行为。
+  focusDate?: Date | string
+  resourceTaskBufferScreens?: number
   useDefaultDrawer?: boolean
   useDefaultMilestoneDialog?: boolean
   onTaskDelete?: (task: Task) => void
@@ -91,6 +96,8 @@ interface Props {
 const props = withDefaults(defineProps<Props>(), {
   tasks: () => [],
   milestones: () => [],
+  focusDate: undefined,
+  resourceTaskBufferScreens: undefined,
   useDefaultDrawer: true,
   useDefaultMilestoneDialog: true,
   onTaskDelete: undefined,
@@ -119,6 +126,8 @@ const props = withDefaults(defineProps<Props>(), {
 
 // 定义emits
 const emit = defineEmits<{
+  'focus-date-settled': [date: Date]
+  'viewport-date-change': [date: Date]
   'timeline-scale-changed': [scale: TimelineScale]
   'click-task': [task: Task, event: MouseEvent]
   'edit-task': [task: Task]
@@ -163,52 +172,42 @@ const resourceConflicts = inject<ComputedRef<Map<string, Set<number>>>>(
 // TaskBar渲染key，用于在容器变化时强制重新渲染
 const taskBarRenderKey = ref(0)
 
-// v1.9.2 计算资源视图中每个任务的冲突任务列表（用于显示详细冲突信息）
-const getConflictTasksForTask = (resourceId: string | number, taskId: string | number): Task[] => {
-  if (viewMode.value !== 'resource') return []
-
-  const conflictTaskIds = resourceConflicts.value.get(String(resourceId))
-  if (!conflictTaskIds || !conflictTaskIds.has(Number(taskId))) return []
-
-  const resources = dataSource.value as Resource[]
-  const resource = resources.find(r => String(r.id) === String(resourceId))
-  if (!resource || !resource.tasks) return []
-
-  const currentTask = resource.tasks.find(t => t.id === taskId)
-  if (!currentTask || !currentTask.startDate || !currentTask.endDate) return []
-
-  const currentStart = new Date(currentTask.startDate).getTime()
-  const currentEndDate = new Date(currentTask.endDate)
-
-  // v1.9.7 修复：返回所有与当前任务时间重叠的冲突任务
-  // 不需要再次验证占比相加是否超过100%，因为resourceConflicts已经包含了所有冲突的任务ID
-  // 当多个任务同时重叠时（如3个任务各75%），应该全部返回，而不是只返回第一个两两超载的任务
-  // v1.9.9 修复：endDate 包含当天，需要 +1 天来判断交集（与 conflictUtils 保持一致）
-  // v1.13.5 修复：若 endDate 显式带 time 部分（如 TaskDrawer 编辑保存后写入的
-  // '2025-08-01 00:00'，语义上是"7月31日结束"），需先经 getEffectiveEndDateOnly
-  // 修正（-15分钟再截断）再 +1天，避免把次日0点误当成占满当天，导致本不冲突的
-  // 任务被错误列入冲突列表（详见 .ai/.claude/requirments/v1.13.5.md 第9节）
-  const currentEndPlus =
-    getEffectiveEndDateOnly(currentTask.endDate, currentEndDate).getTime() + 24 * 60 * 60 * 1000
-
-  const conflictTasks = resource.tasks.filter(task => {
-    if (task.id === taskId) return false
-    if (!task.startDate || !task.endDate) return false
-    // 任务必须在冲突任务集合中
-    if (!conflictTaskIds.has(task.id)) return false
-
-    const taskStart = new Date(task.startDate).getTime()
-    const taskEndDate = new Date(task.endDate)
-    const taskEndPlus =
-      getEffectiveEndDateOnly(task.endDate, taskEndDate).getTime() + 24 * 60 * 60 * 1000
-
-    // 检查时间重叠：endDate 包含当天，所以需要 +1 天来判断
-    // 例如：任务A endDate=12-24, 任务B startDate=12-24，应判断为重叠（都占用12-24这一天）
-    return currentStart < taskEndPlus && taskStart < currentEndPlus
-  })
-
-  return conflictTasks
-}
+// 冲突详情只随任务/冲突集合变化计算，滚动重绘复用稳定的数组。
+const noConflictTasks: Task[] = []
+const resourceConflictDetails = computed(() => {
+  const result = new Map<string, Map<string | number, Task[]>>()
+  if (viewMode.value !== 'resource') return result
+  for (const resource of dataSource.value as Resource[]) {
+    const ids = resourceConflicts.value.get(String(resource.id))
+    if (!ids?.size) continue
+    const intervals = (resource.tasks ?? [])
+      .filter(task => ids.has(task.id) && task.startDate && task.endDate)
+      .map(task => ({
+        task,
+        start: new Date(task.startDate!).getTime(),
+        // 保留原有边界语义：有效结束日期加一天，包含结束当天。
+        end: getEffectiveEndDateOnly(task.endDate, new Date(task.endDate!)).getTime() + 86400000,
+      }))
+    const details = new Map<string | number, Task[]>()
+    for (const current of intervals) {
+      details.set(
+        current.task.id,
+        intervals
+          .filter(
+            other =>
+              other.task.id !== current.task.id &&
+              current.start < other.end &&
+              other.start < current.end
+          )
+          .map(other => other.task)
+      )
+    }
+    result.set(String(resource.id), details)
+  }
+  return result
+})
+const getConflictTasksForTask = (resourceId: string | number, taskId: string | number): Task[] =>
+  resourceConflictDetails.value.get(String(resourceId))?.get(taskId) ?? noConflictTasks
 
 // v1.9.2 拖拽状态管理（用于冲突检测优化）
 const isDraggingTaskBar = ref(false)
@@ -266,7 +265,7 @@ const resourceViewTaskBarRowHeight = computed(() => {
 const VERTICAL_BUFFER = 5 // 纵向缓冲区行数
 const timelineBodyScrollTop = ref(0) // 纵向滚动位置
 // 滚动同步标志位：防止 TaskList ↔ Timeline 垂直滚动形成 2 跳循环派发
-let _isSyncingScrollFromTaskList = false
+const taskListScrollSync = createScrollSyncGuard()
 // GanttLinks 性能优化：滚动期间暂停 canvas 重绘，滚动停止后补绘一次
 const isTimelineScrolling = ref(false)
 let _scrollIdleTimer: number | ReturnType<typeof setTimeout> | null = null
@@ -387,14 +386,14 @@ const handleTooltipShow = (payload: TooltipShowPayload) => {
     // ── 左侧停靠：tooltip 显示在气泡右侧，垂直居中 ──────────────────────────
     // CSS 对 placement-right 应用 translateY(-50%)，故 top 为目标垂直中心，限制在视窗内
     placement = 'right'
-    left = targetRect.right + GAP
+    left = Math.max(panelLeft, targetCX) + GAP
     top = Math.max(PAD + TH / 2, Math.min(viewH - PAD - TH / 2, targetCY))
     arrowOffset = Math.max(10, Math.min(TH - 10, targetCY - top + TH / 2))
   } else if (dockRight) {
     // ── 右侧停靠：tooltip 显示在气泡左侧，垂直居中 ──────────────────────────
     // CSS 对 placement-left 应用 translateY(-50%)，故 top 为目标垂直中心，限制在视窗内
     placement = 'left'
-    left = targetRect.left - TW - GAP
+    left = Math.min(panelRight, targetCX) - TW - GAP
     top = Math.max(PAD + TH / 2, Math.min(viewH - PAD - TH / 2, targetCY))
     arrowOffset = Math.max(10, Math.min(TH - 10, targetCY - top + TH / 2))
   } else {
@@ -416,6 +415,11 @@ const handleTooltipShow = (payload: TooltipShowPayload) => {
       top = targetRect.bottom + GAP
     }
   }
+
+  // 长任务可能延伸到面板外，停靠分支也必须将提示框约束在可见范围内。
+  const minLeft = Math.max(PAD, Math.min(panelLeft + PAD, window.innerWidth - TW - PAD))
+  const maxLeft = Math.max(minLeft, Math.min(panelRight, window.innerWidth) - TW - PAD)
+  left = Math.max(minLeft, Math.min(maxLeft, left))
 
   tooltipState.placement = placement
   tooltipState.position = { left, top }
@@ -642,6 +646,7 @@ const dayWidth = computed(() => {
 
 type TaskDateRange = { minDate: Date; maxDate: Date } | null
 let cachedTaskDateRange: TaskDateRange = null
+let viewportCenterDate: Date | undefined
 
 const invalidateTaskDateRangeCache = () => {
   cachedTaskDateRange = null
@@ -711,11 +716,16 @@ const computeTasksDateRange = (): TaskDateRange => {
 
 // 获取任务数据的日期范围（用于月度/年度视图时间轴范围计算）
 const getTasksDateRange = () => {
-  if (cachedTaskDateRange) {
-    return cachedTaskDateRange
+  if (!cachedTaskDateRange) cachedTaskDateRange = computeTasksDateRange()
+  // 受控导航也要支持没有任务的目标日期。
+  const focusTime =
+    props.focusDate == null ? NaN : new Date(viewportCenterDate ?? props.focusDate).getTime()
+  if (Number.isFinite(focusTime)) {
+    return {
+      minDate: new Date(Math.min(cachedTaskDateRange?.minDate.getTime() ?? focusTime, focusTime)),
+      maxDate: new Date(Math.max(cachedTaskDateRange?.maxDate.getTime() ?? focusTime, focusTime)),
+    }
   }
-
-  cachedTaskDateRange = computeTasksDateRange()
   return cachedTaskDateRange
 }
 
@@ -1967,12 +1977,11 @@ const getDateByScrollPosition = (scrollPosition: number): Date => {
   }
 
   if (scale === TimelineScale.HOUR) {
-    // 小时视图：每小时40px
-    const hours = scrollPosition / 40
+    // 使用实际配置的单元格宽度，避免自定义刻度时虚拟窗口日期偏移。
+    const hours = scrollPosition / effectiveScaleConfigs.value['hour'].cellWidth
     return new Date(timelineStart.getTime() + hours * 60 * 60 * 1000)
   } else if (scale === TimelineScale.DAY) {
-    // 日视图：每天30px
-    const days = scrollPosition / 30
+    const days = scrollPosition / effectiveScaleConfigs.value['day'].cellWidth
     return new Date(timelineStart.getTime() + days * 24 * 60 * 60 * 1000)
   } else if (
     scale === TimelineScale.WEEK ||
@@ -2197,6 +2206,63 @@ const visibleResources = computed(() => {
   }))
 })
 
+const bufferedResourceRendering = computed(
+  () =>
+    viewMode.value === 'resource' &&
+    props.resourceTaskBufferScreens != null &&
+    Number.isFinite(props.resourceTaskBufferScreens) &&
+    props.resourceTaskBufferScreens >= 0 &&
+    (currentTimeScale.value === TimelineScale.HOUR ||
+      currentTimeScale.value === TimelineScale.DAY ||
+      currentTimeScale.value === TimelineScale.MONTH)
+)
+type ResourceRenderWindow = {
+  context: string
+  pixels: ReturnType<typeof getBufferedWindow>
+  start: number
+  end: number
+}
+const resourceRenderWindow = computed<ResourceRenderWindow | undefined>(previous => {
+  if (!bufferedResourceRendering.value) return undefined
+  const scale = currentTimeScale.value
+  const context = `${scale}:${timelineConfig.value.startDate.getTime()}:${effectiveScaleConfigs.value[scale].cellWidth}`
+  const pixels = getBufferedWindow(
+    timelineScrollLeft.value,
+    timelineContainerWidth.value || 1200,
+    props.resourceTaskBufferScreens!,
+    previous?.context === context ? previous.pixels : undefined
+  )
+  if (previous?.context === context && previous.pixels === pixels) return previous
+  // 月刻度缓冲可超出整条时间轴，直接钳制到末日，避免越界查找与警告。
+  const axisWidth =
+    scale === TimelineScale.MONTH
+      ? timelineData.value.length * effectiveScaleConfigs.value[scale].cellWidth
+      : Infinity
+  const dateAt = (position: number) =>
+    position >= axisWidth ? timelineConfig.value.endDate : getDateByScrollPosition(position)
+  return {
+    context,
+    pixels,
+    start: dateAt(pixels.start).getTime(),
+    end: dateAt(pixels.end).getTime(),
+  }
+})
+// 日期解析只随资源/任务或刻度改变；横向滚动复用区间和组件已有的车道布局缓存。
+const resourceTaskIntervals = computed<
+  Map<string | number, { task: Task; interval: [number, number] | null }[]>
+>(() => {
+  if (!bufferedResourceRendering.value) return new Map()
+  return new Map(
+    visibleResources.value.map(({ resource }) => [
+      resource.id,
+      (resource.tasks ?? []).map(task => ({
+        task,
+        interval: getResourceTaskInterval(task, currentTimeScale.value === TimelineScale.HOUR),
+      })),
+    ])
+  )
+})
+
 // ─── 任务视图 TaskBar 分批渲染（对齐资源视图策略）────────────────────────────────────
 // 每次虚拟窗口滑动时，新进入视口的行限流挂载，避免同帧大量 getBoundingClientRect reflow
 const TASK_VIEW_BATCH_SIZE = 3 // 每帧最多新增 3 行（节奏与资源视图一致）
@@ -2392,6 +2458,33 @@ const rebuildResourceTaskQueues = () => {
     return
   }
 
+  const window = resourceRenderWindow.value
+  if (window) {
+    // 自动滚动不能卸载正在拖拽的任务；结束后再更新绘制窗口。
+    if (isDraggingTaskBar.value) return
+    stopResourceBatchRender()
+    const queues = new Map<string | number, ResourceTaskQueue>()
+    const limits = new Map<string | number, number>()
+    visibleResources.value.forEach(({ resource }) => {
+      const renderTasks = (resourceTaskIntervals.value.get(resource.id) ?? [])
+        .filter(
+          ({ interval }) => interval && interval[1] >= window.start && interval[0] <= window.end
+        )
+        .map(({ task }) => task)
+      queues.set(resource.id, {
+        tasks: renderTasks,
+        visibleCount: renderTasks.length,
+        totalCount: renderTasks.length,
+        originalTasks: resource.tasks ?? [],
+      })
+      // 两维虚拟化已限制数量；窗口内任务同步挂载，避免进入视口后才逐帧补入。
+      limits.set(resource.id, renderTasks.length)
+    })
+    resourceTaskQueues.value = queues
+    resourceTaskRenderLimits.value = limits
+    return
+  }
+
   const { startDate: visibleStartDate, endDate: visibleEndDate } = visibleTimeRange.value
   const skipHorizontalFilter = currentTimeScale.value === TimelineScale.HOUR
 
@@ -2498,15 +2591,11 @@ const rebuildResourceTaskQueues = () => {
 
     // v1.9.6 Sprint2(P5) - 智能初始渲染限制：优先渲染未缓存的TaskBar
     const previousLimit = resourceTaskRenderLimits.value.get(resourceId)
-    let initialLimit: number
-
-    if (previousLimit !== undefined && previousLimit >= visibleTasks.length) {
-      // 如果之前已经渲染超过当前可见数量，直接继承
-      initialLimit = Math.min(previousLimit, visibleTasks.length) // v1.9.6 Sprint4 - 修复：使用 visibleTasks.length
-    } else {
-      // 否则按批次大小逐步渲染
-      initialLimit = Math.min(RESOURCE_BATCH_SIZE, visibleTasks.length)
-    }
+    // 新任务进入时继续已有批次，不能降回 5 条而卸载已经显示的任务。
+    const initialLimit = Math.min(
+      visibleTasks.length,
+      Math.max(previousLimit ?? 0, RESOURCE_BATCH_SIZE)
+    )
 
     limits.set(resourceId, initialLimit)
   })
@@ -2520,7 +2609,14 @@ const rebuildResourceTaskQueues = () => {
 }
 
 watch(
-  () => [viewMode.value, currentTimeScale.value, visibleTimeRange.value, visibleResources.value],
+  () => [
+    viewMode.value,
+    currentTimeScale.value,
+    bufferedResourceRendering.value ? resourceRenderWindow.value : visibleTimeRange.value,
+    visibleResources.value,
+    resourceTaskIntervals.value,
+    isDraggingTaskBar.value,
+  ],
   () => rebuildResourceTaskQueues(),
   { immediate: true }
 )
@@ -2530,6 +2626,7 @@ watch(
   () => resourceTaskRenderLimits.value,
   newLimits => {
     if (viewMode.value !== 'resource') return
+    if (bufferedResourceRendering.value) return
 
     const cache = new Map(taskBarRenderCache.value)
     const currentTimestamp = Date.now()
@@ -2569,8 +2666,11 @@ const visibleResourcesWithFilteredTasks = computed(() => {
     return []
   }
 
-  const { startDate: visibleStartDate, endDate: visibleEndDate } = visibleTimeRange.value
-  const skipHorizontalFilter = currentTimeScale.value === TimelineScale.HOUR
+  const renderWindow = resourceRenderWindow.value
+  const { startDate: visibleStartDate, endDate: visibleEndDate } = renderWindow
+    ? { startDate: new Date(renderWindow.start), endDate: new Date(renderWindow.end) }
+    : visibleTimeRange.value
+  const skipHorizontalFilter = currentTimeScale.value === TimelineScale.HOUR && !renderWindow
 
   // 性能监控统计
   let totalOriginalTasks = 0
@@ -2587,6 +2687,13 @@ const visibleResourcesWithFilteredTasks = computed(() => {
     if (queue) {
       const renderCount = limit ?? queue.visibleCount
       renderTasks = queue.tasks.slice(0, renderCount)
+    } else if (renderWindow) {
+      renderTasks = (resourceTaskIntervals.value.get(resource.id) ?? [])
+        .filter(
+          ({ interval }) =>
+            interval && interval[1] >= renderWindow.start && interval[0] <= renderWindow.end
+        )
+        .map(({ task }) => task)
     } else {
       // 过滤出在可见时间范围内的任务（用于TaskBar渲染）
       renderTasks = skipHorizontalFilter
@@ -3510,11 +3617,15 @@ watch(
   }
 )
 
-// v1.9.6 Phase1 - 监听timelineData和时间刻度变化，自动重建位置缓存
+// 时间范围、刻度或格宽改变时重建缓存（周/月概览可能使用相同刻度、不同格宽）。
 // 优化：只在Timeline层执行一次，所有TaskBar共享缓存（250个TaskBar × 3ms → 预计算80ms + 250个TaskBar × 0.2ms）
 let positionCacheWatchCount = 0
 watch(
-  [timelineData, currentTimeScale],
+  [
+    timelineData,
+    currentTimeScale,
+    () => effectiveScaleConfigs.value[currentTimeScale.value].cellWidth,
+  ],
   ([newData, newScale]) => {
     positionCacheWatchCount++
 
@@ -3559,6 +3670,8 @@ watch(
 
 // 将今日定位到时间线中间位置
 const scrollToTodayCenter = (retry = 0) => {
+  // 宿主已指定目标日期，避免初始化、切换刻度、资源刷新再次滚回今天。
+  if (props.focusDate != null) return
   // 开始滚动时隐藏半圆
   hideBubbles.value = true
   isInitialScrolling.value = true
@@ -3999,7 +4112,8 @@ const getDatePixelOffset = (date: Date | string): number => {
       yearRange.startDate.getDate()
     )
   } else if (currentTimeScale.value === TimelineScale.MONTH) {
-    const monthRange = getMonthTimelineRange()
+    // 受控导航保持已有时间原点，搜索/筛选后不能改用缩小的任务范围。
+    const monthRange = props.focusDate != null ? timelineConfig.value : getMonthTimelineRange()
     startNormalized = new Date(
       monthRange.startDate.getFullYear(),
       monthRange.startDate.getMonth(),
@@ -4093,7 +4207,7 @@ const getDatePixelOffset = (date: Date | string): number => {
     // 计算月内的天数偏移
     const targetDay = targetNormalized.getDate()
     const daysInMonth = new Date(targetYear, targetMonth + 1, 0).getDate()
-    datePosition += (targetDay / daysInMonth) * monthWidth
+    datePosition += ((targetDay - 1) / daysInMonth) * monthWidth
   } else if (currentTimeScale.value === TimelineScale.WEEK) {
     // 周视图：每周N px
     const weekWidth = effectiveScaleConfigs.value['week'].cellWidth
@@ -4106,8 +4220,12 @@ const getDatePixelOffset = (date: Date | string): number => {
   return datePosition
 }
 
-const scrollToDate = (date: Date | string) => {
+let dateNavigationPending = false
+let focusScrollFrame = 0
+let viewportDateTimer: ReturnType<typeof setTimeout> | undefined
+const scrollToDate = (date: Date | string, behavior: ScrollBehavior = 'smooth') => {
   const targetDate = typeof date === 'string' ? new Date(date) : date
+  if (!Number.isFinite(targetDate.getTime())) return
 
   // 目标日期在时间线中的像素位置（与 getDatePixelOffset 共用同一套换算逻辑）
   const datePosition = getDatePixelOffset(targetDate)
@@ -4115,6 +4233,9 @@ const scrollToDate = (date: Date | string) => {
   // 使用缓存的容器元素
   const timeline = timelineContainerElement.value
   if (!timeline) return
+  dateNavigationPending = true
+  clearTimeout(viewportDateTimer)
+  cancelAnimationFrame(focusScrollFrame)
 
   const containerWidth = timeline.clientWidth
 
@@ -4124,8 +4245,100 @@ const scrollToDate = (date: Date | string) => {
   // 滚动到指定位置，确保目标日期在中间
   timeline.scrollTo({
     left: Math.max(0, centeredScrollPosition),
-    behavior: 'smooth',
+    behavior,
   })
+  // 包括公开 scrollToDate（例如再次点击今天）在内的主动定位均不反向同步日期。
+  let lastLeft = timeline.scrollLeft
+  let stableSince = performance.now()
+  const settle = () => {
+    const now = performance.now()
+    const destination = Math.max(
+      0,
+      Math.min(
+        getDatePixelOffset(targetDate) - timeline.clientWidth / 2,
+        timeline.scrollWidth - timeline.clientWidth
+      )
+    )
+    if (Math.abs(timeline.scrollLeft - lastLeft) > 0.1) stableSince = now
+    lastLeft = timeline.scrollLeft
+    if (
+      (Math.abs(lastLeft - destination) < 1 && now - stableSince >= 34) ||
+      now - stableSince > 200
+    ) {
+      // 等最后一帧滚动事件落定，避免动画尾帧被识别为手动滚动。
+      timelineScrollLeft.value = timeline.scrollLeft
+      dateNavigationPending = false
+      emit('focus-date-settled', targetDate)
+    } else {
+      focusScrollFrame = requestAnimationFrame(settle)
+    }
+  }
+  focusScrollFrame = requestAnimationFrame(settle)
+}
+
+// 日期、刻度与数据范围可能在同一次交互中依次更新（范围计算防抖 50ms）。
+// 等最终布局就绪后只发起一次定位；首次加载直接定位，之后保留平滑滚动。
+let focusScrollTimer: ReturnType<typeof setTimeout> | undefined
+let hasFocusedDate = false
+let focusedScale: TimelineScale | undefined
+let focusedCellWidth: number | undefined
+watch(
+  [
+    () => props.focusDate,
+    timelineData,
+    currentTimeScale,
+    () => effectiveScaleConfigs.value[currentTimeScale.value].cellWidth,
+  ],
+  ([focus, , scale, cellWidth], [previousFocus, , previousScale, previousCellWidth]) => {
+    if (props.focusDate == null) return
+    // 数据随手动滚动更新时，仅保留视口；只有新的定位请求才滚动。
+    if (
+      focus !== previousFocus ||
+      scale !== previousScale ||
+      cellWidth !== previousCellWidth ||
+      !hasFocusedDate
+    ) {
+      viewportCenterDate = undefined
+      dateNavigationPending = true
+    }
+    if (!dateNavigationPending) return
+    clearTimeout(focusScrollTimer)
+    clearTimeout(viewportDateTimer)
+    cancelAnimationFrame(focusScrollFrame)
+    focusScrollTimer = setTimeout(() => {
+      const target = props.focusDate
+      if (target == null || !timelineContainerElement.value) return
+      const targetDate = new Date(target)
+      // 周/月视图同为按天绘制，但格宽不同；缩放切换直接定位，避免跨越大量日期。
+      const currentCellWidth = effectiveScaleConfigs.value[currentTimeScale.value].cellWidth
+      const smooth =
+        hasFocusedDate &&
+        focusedScale === currentTimeScale.value &&
+        focusedCellWidth === currentCellWidth
+      scrollToDate(targetDate, smooth ? 'smooth' : 'instant')
+      hasFocusedDate = true
+      focusedScale = currentTimeScale.value
+      focusedCellWidth = currentCellWidth
+    }, 120)
+  },
+  { immediate: true, flush: 'post' }
+)
+onUnmounted(() => {
+  clearTimeout(focusScrollTimer)
+  clearTimeout(viewportDateTimer)
+  cancelAnimationFrame(focusScrollFrame)
+})
+
+function cancelDateNavigation() {
+  if (!dateNavigationPending || props.focusDate == null) return
+  clearTimeout(focusScrollTimer)
+  cancelAnimationFrame(focusScrollFrame)
+  dateNavigationPending = false
+  const timeline = timelineContainerElement.value
+  if (timeline) {
+    timeline.scrollTo({ left: timeline.scrollLeft, behavior: 'instant' })
+    scheduleViewportDateSync(timeline)
+  }
 }
 
 // 更新任务
@@ -4653,15 +4866,8 @@ const handleTaskListVerticalScroll = (event: CustomEvent) => {
 
   debouncedUpdateCanvasPosition()
 
-  if (timelineBodyElement.value && Math.abs(timelineBodyElement.value.scrollTop - scrollTop) > 1) {
-    // 设置标志位：当前是由 TaskList 触发的同步写入
-    // 防止 handleTimelineBodyScroll 被触发后反向再次派发事件（2跳链路）
-    _isSyncingScrollFromTaskList = true
-    timelineBodyElement.value.scrollTop = scrollTop
-    // scroll 事件会同步触发，Promise.resolve 在其后执行，确保标志在返回相义务后重置
-    Promise.resolve().then(() => {
-      _isSyncingScrollFromTaskList = false
-    })
+  if (timelineBodyElement.value) {
+    taskListScrollSync.write(timelineBodyElement.value, scrollTop)
   }
 }
 
@@ -4671,6 +4877,7 @@ const handleTimelineBodyScroll = (event: Event) => {
   if (!target) return
 
   const scrollTop = target.scrollTop
+  const isSyncedScroll = taskListScrollSync.isEcho(scrollTop)
 
   // 立即更新纵向滚动位置（用于虚拟滚动计算）
   timelineBodyScrollTop.value = scrollTop
@@ -4688,11 +4895,8 @@ const handleTimelineBodyScroll = (event: Event) => {
 
   debouncedUpdateCanvasPosition()
 
-  // 拖拽时不同步滚动事件，避免性能问题
-  if (isDragging.value) return
-
   // 由 TaskList → Timeline 同步写入触发时，不再反向派发，避免 2 跳循环
-  if (_isSyncingScrollFromTaskList) return
+  if (isSyncedScroll) return
 
   // 同步垂直滚动到TaskList
   if (scrollTop >= 0) {
@@ -4761,6 +4965,9 @@ const startScrollTop = ref(0)
 const timelineContainer = ref<HTMLElement | null>(null)
 const timelineBodyElement = ref<HTMLElement | null>(null) // 缓存timeline-body元素引用
 let scrollRafId: number | null = null // 时间轴拖拽滚动的 RAF ID
+let pendingPan: { x: number; y: number } | null = null
+let lastPanX = 0
+let lastPanY = 0
 
 // 边界滚动相关状态
 const isAutoScrolling = ref(false)
@@ -4803,7 +5010,11 @@ const handleTaskBarHighlighted = () => {
       // 启动拖拽滚动
       isDragging.value = true
       startX.value = e.pageX
+      startY.value = e.pageY
       startScrollLeft.value = timelineContainer.value?.scrollLeft || 0
+      startScrollTop.value = timelineBodyElement.value?.scrollTop || 0
+      lastPanX = e.pageX
+      lastPanY = e.pageY
 
       if (timelineContainer.value) {
         timelineContainer.value.style.cursor = 'grabbing'
@@ -4955,6 +5166,8 @@ const handleMouseDown = (event: MouseEvent) => {
   isDragging.value = true
   startX.value = event.pageX
   startY.value = event.pageY
+  lastPanX = event.pageX
+  lastPanY = event.pageY
   startScrollLeft.value = timelineContainer.value?.scrollLeft || 0
 
   // 获取并缓存timeline-body元素的scrollTop（支持垂直滚动）
@@ -4979,44 +5192,31 @@ const handleMouseDown = (event: MouseEvent) => {
   document.addEventListener('mouseup', handleMouseUp)
 }
 
+// 每帧只应用最新坐标；纯横向拖动不读写纵向位置，避免额外布局与同步。
+const applyPendingPan = () => {
+  scrollRafId = null
+  const point = pendingPan
+  pendingPan = null
+  if (!point || !timelineContainer.value) return
+  if (point.x !== lastPanX) {
+    timelineContainer.value.scrollLeft = startScrollLeft.value - (point.x - startX.value) * 1.5
+    lastPanX = point.x
+  }
+  if (point.y !== lastPanY && timelineBodyElement.value) {
+    timelineBodyElement.value.scrollTop = startScrollTop.value - (point.y - startY.value) * 1.5
+    lastPanY = point.y
+    // 纵向位置通过原生 scroll 事件单向同步，复用已有的防回传逻辑。
+  }
+}
+
 // 鼠标移动时拖拽滑动（支持水平和垂直方向）
 const handleMouseMove = (event: MouseEvent) => {
   if (!isDragging.value || !timelineContainer.value) return
 
   event.preventDefault()
 
-  // 取消之前的 RAF
-  if (scrollRafId !== null) {
-    cancelAnimationFrame(scrollRafId)
-  }
-
-  // 使用 requestAnimationFrame 批处理滚动更新
-  scrollRafId = requestAnimationFrame(() => {
-    if (!timelineContainer.value) return
-
-    // 计算水平和垂直移动距离
-    const x = event.pageX
-    const y = event.pageY
-    const walkX = (x - startX.value) * 1.5 // 水平拖拽速度倍数
-    const walkY = (y - startY.value) * 1.5 // 垂直拖拽速度倍数
-
-    // 水平滚动（timeline容器）
-    timelineContainer.value.scrollLeft = startScrollLeft.value - walkX
-
-    // 垂直滚动（timeline-body元素）- 使用缓存的元素引用
-    if (timelineBodyElement.value) {
-      const newScrollTop = startScrollTop.value - walkY
-      timelineBodyElement.value.scrollTop = newScrollTop
-
-      // 直接同步 TaskList 的滚动位置，避免通过事件触发
-      const taskListBody = document.querySelector('.task-list-body') as HTMLElement
-      if (taskListBody) {
-        taskListBody.scrollTop = newScrollTop
-      }
-    }
-
-    scrollRafId = null
-  })
+  pendingPan = { x: event.pageX, y: event.pageY }
+  if (scrollRafId === null) scrollRafId = requestAnimationFrame(applyPendingPan)
 }
 
 // 鼠标抬起结束拖拽
@@ -5027,13 +5227,14 @@ const handleMouseUp = () => {
     return
   }
 
-  isDragging.value = false
-
   // 取消任何待处理的 RAF
   if (scrollRafId !== null) {
     cancelAnimationFrame(scrollRafId)
     scrollRafId = null
   }
+  // 松手前提交最后一个移动位置，不能丢弃尚未绘制的一帧。
+  applyPendingPan()
+  isDragging.value = false
 
   if (timelineContainer.value) {
     timelineContainer.value.style.cursor = 'grab'
@@ -5048,15 +5249,47 @@ const handleMouseUp = () => {
   document.removeEventListener('mouseup', handleMouseUp)
 }
 
+function scheduleViewportDateSync(target: HTMLElement) {
+  clearTimeout(viewportDateTimer)
+  viewportDateTimer = setTimeout(() => {
+    if (dateNavigationPending) return
+    // 拖动时间轴或任务期间不替换资源行，避免打断拖拽。
+    if (isDragging.value || isDraggingTaskBar.value) {
+      scheduleViewportDateSync(target)
+      return
+    }
+    const scale = currentTimeScale.value
+    if (scale === TimelineScale.MONTH) {
+      const date = getDateByScrollPosition(target.scrollLeft + target.clientWidth / 2 + 0.5)
+      viewportCenterDate = date
+      emit('viewport-date-change', date)
+      return
+    }
+    if (scale !== TimelineScale.HOUR && scale !== TimelineScale.DAY) return
+    const cellWidth = effectiveScaleConfigs.value[scale].cellWidth
+    // 用视口中心确定当前日/周；容忍浏览器亚像素取整，避免午夜误落到前一天。
+    const cells = (target.scrollLeft + target.clientWidth / 2 + 0.5) / cellWidth
+    const date = new Date(timelineConfig.value.startDate)
+    date.setHours(0, 0, 0, 0)
+    date.setDate(date.getDate() + Math.floor(cells / (scale === TimelineScale.HOUR ? 24 : 1)))
+    viewportCenterDate = date
+    emit('viewport-date-change', date)
+  }, 100)
+}
+
 // 检测滚动状态（优化版：减少计算和事件派发）
 const handleTimelineScroll = (event: Event) => {
   const target = event.target as HTMLElement
   if (!target) return
 
   const scrollLeft = target.scrollLeft
+  const horizontalChanged = Math.abs(scrollLeft - timelineScrollLeft.value) > 0.1
 
   // 立即更新关键滚动位置信息（用于虚拟滚动）
   timelineScrollLeft.value = scrollLeft
+  if (horizontalChanged && props.focusDate != null && !dateNavigationPending) {
+    scheduleViewportDateSync(target)
+  }
 
   // 滚动时关闭所有右键菜单
   window.dispatchEvent(new CustomEvent('close-all-taskbar-menus'))
@@ -5276,6 +5509,9 @@ onUnmounted(() => {
   }
 
   // 清理可能残留的鼠标事件监听器
+  if (scrollRafId !== null) cancelAnimationFrame(scrollRafId)
+  scrollRafId = null
+  pendingPan = null
   document.removeEventListener('mousemove', handleMouseMove)
   document.removeEventListener('mouseup', handleMouseUp)
 })
@@ -5494,14 +5730,56 @@ const updateTimelineRange = () => {
   }
 
   if (newRange) {
+    const controlled = props.focusDate != null && hasFocusedDate
+    const anchor = new Date()
+    const anchorBefore = controlled ? getDatePixelOffset(anchor) : 0
+    const scrollBefore = timelineContainerElement.value?.scrollLeft ?? 0
+    if (controlled) {
+      // 导航和离场数据清理只扩展范围，不收缩坐标系。
+      newRange.startDate = new Date(
+        Math.min(newRange.startDate.getTime(), timelineConfig.value.startDate.getTime())
+      )
+      newRange.endDate = new Date(
+        Math.max(newRange.endDate.getTime(), timelineConfig.value.endDate.getTime())
+      )
+    }
+    if (
+      controlled &&
+      newRange.startDate.getTime() === timelineConfig.value.startDate.getTime() &&
+      newRange.endDate.getTime() === timelineConfig.value.endDate.getTime()
+    )
+      return
     clearTimelineCache()
     isUpdatingTimelineConfig = true
     timelineConfig.value.startDate = newRange.startDate
     timelineConfig.value.endDate = newRange.endDate
     isUpdatingTimelineConfig = false
     timelineData.value = generateTimelineData()
+    if (controlled) {
+      const offset = getDatePixelOffset(anchor) - anchorBefore
+      if (offset !== 0) {
+        // 虚拟任务过滤必须与新时间原点同步，避免中间一帧误删当前可见任务。
+        timelineScrollLeft.value = scrollBefore + offset
+        // 向前扩展时间轴时，在绘制前补偿前缀宽度，保留当前屏幕内容。
+        nextTick(() => {
+          timelineContainerElement.value?.scrollTo({
+            left: scrollBefore + offset,
+            behavior: 'instant',
+          })
+        })
+      }
+    }
   }
 }
+
+watch(
+  () => props.focusDate,
+  () => {
+    if (props.focusDate == null) return
+    forceTimelineRangeInResourceView = true
+    debouncedUpdateTimelineRange()
+  }
+)
 
 watch(
   timelineContainerWidth,
@@ -5538,8 +5816,8 @@ watch([timelineData, timelineContainerWidth], () => {
     // 清空全量坐标并重新异步种子填充（时间线数据变化，坐标全部失效）
     allBarPositions.value = {}
     scheduleSeedFill(true)
-    // 更新渲染key强制TaskBar重新渲染
-    taskBarRenderKey.value++
+    // 受控资源导航由响应式日期参数更新位置，保留已有任务 DOM，避免先卸载再滚动。
+    if (props.focusDate == null) taskBarRenderKey.value++
     // 延迟更新SVG尺寸
     nextTick(() => {
       setTimeout(() => {
@@ -5655,7 +5933,7 @@ const generateMonthTimelineData = () => {
   // 根据时间刻度动态调整时间范围
   let startDate: Date, endDate: Date
 
-  if (currentTimeScale.value === TimelineScale.MONTH) {
+  if (currentTimeScale.value === TimelineScale.MONTH && props.focusDate == null) {
     // 月度视图使用任务范围+2年
     const monthRange = getMonthTimelineRange()
     startDate = monthRange.startDate
@@ -5896,6 +6174,8 @@ const handleAddSuccessor = (task: Task) => {
     }"
     @mousedown="handleMouseDown"
     @scroll="handleTimelineScroll"
+    @wheel.passive="cancelDateNavigation"
+    @pointerdown="cancelDateNavigation"
   >
     <!-- Timeline Header -->
     <div class="timeline-header">
@@ -6925,7 +7205,8 @@ const handleAddSuccessor = (task: Task) => {
   padding: 10px 14px;
   border-radius: 6px;
   font-size: 12px;
-  z-index: var(--gantt-z-overlay);
+  /* Teleport 到 body 后，独立引用组件时可能没有全局主题变量。 */
+  z-index: var(--gantt-z-overlay, 9999);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
   pointer-events: none;
   overflow: visible; /* 允许箭头伸出容器边缘 */
@@ -7366,6 +7647,7 @@ const handleAddSuccessor = (task: Task) => {
   flex: 1;
   overflow-x: hidden; /* 禁用横向滚动，由父容器.timeline处理 */
   overflow-y: auto; /* 只保留纵向滚动 */
+  overflow-anchor: none; /* 虚拟行由组件定位，禁止浏览器额外补偿滚动位置 */
   position: relative;
   width: fit-content;
   background: var(--gantt-bg-primary, #ffffff);

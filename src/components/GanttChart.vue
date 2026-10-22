@@ -106,6 +106,8 @@ const props = withDefaults(defineProps<Props>(), {
   expandAll: true,
   locale: 'zh-CN',
   timeScale: 'week',
+  focusDate: undefined,
+  resourceTaskBufferScreens: undefined,
   theme: undefined, // 不设置默认值，允许自动检测系统主题
   enableTaskListCollapsible: true,
   taskListVisible: true,
@@ -117,6 +119,8 @@ const props = withDefaults(defineProps<Props>(), {
 })
 
 const emit = defineEmits([
+  'focus-date-settled',
+  'viewport-date-change',
   'task-click',
   'task-double-click',
   'taskbar-drag-end',
@@ -735,6 +739,10 @@ interface Props {
   locale?: 'zh-CN' | 'en-US'
   // 时间刻度（响应式）
   timeScale?: TimelineScale
+  // 外部指定定位日期时，由 Timeline 在布局稳定后统一定位，替代自动定位今天。
+  focusDate?: Date | string
+  /** 资源视图小时/日/月刻度的横向绘制缓冲（屏数）；不传则保留原版渲染策略。 */
+  resourceTaskBufferScreens?: number
   // 主题模式（响应式）
   theme?: 'light' | 'dark'
   /**
@@ -4438,6 +4446,10 @@ defineExpose({
         <div class="gantt-panel gantt-panel-right" :class="{ 'full-width': !isTaskListVisible }">
           <Timeline
             ref="timelineRef"
+            :focus-date="props.focusDate"
+            :resource-task-buffer-screens="props.resourceTaskBufferScreens"
+            @focus-date-settled="emit('focus-date-settled', $event)"
+            @viewport-date-change="emit('viewport-date-change', $event)"
             :tasks="tasksForTimeline"
             :milestones="milestonesForTimeline"
             :start-date="timelineDateRange.min"

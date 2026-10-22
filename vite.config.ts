@@ -21,5 +21,13 @@ export default defineConfig(({ command }) => ({
   },
   server: {
     port: 13000,
-  }
+    proxy: {
+      '/api/resource-occupancies': {
+        target: 'http://192.168.0.107:5173',
+        changeOrigin: true,
+        timeout: 15000,
+        proxyTimeout: 15000,
+      },
+    },
+  },
 }))
