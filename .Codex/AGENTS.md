@@ -5,6 +5,14 @@
 - 初始化日期：2026-10-22；基线版本：1.14.5，master 分支，提交 b46bec1。
 - 当前目标：保留原版 demo，并提供接入车间占用接口的精简资源排程页；后续定制开发前先确认功能范围、预期行为和边界条件。
 
+## Fork 与分支维护
+
+- 自有 Fork：`https://github.com/bails404/jordium-gantt-vue3`（公开仓库）；本地 `origin` 指向此仓库，`upstream` 指向原作者仓库。
+- 定制开发分支：`codex/resource-schedule`，推送到同名 `origin` 分支；`master` 保留上游基线。进入 Fork 首页后需选择定制分支查看本项目改动。
+- 本仓库设置 `remote.pushDefault=origin`，日常提交后使用 `git push` 保存到自己的 Fork。
+- 同步上游前先保存当前工作；执行 `git fetch upstream`，检查 `git log --oneline HEAD..upstream/master`，再决定是否执行 `git merge upstream/master`。合并冲突解决后需运行测试和构建，再推送；获取更新与合并更新是两个独立步骤。
+- 当前上游已知测试失败为 `conflictUtils.spec.ts` 的“应该处理没有资源的任务”；不能将该基线失败误认为本次合并新引入的问题。
+
 ## 技术栈与目录
 
 - Vue 3、TypeScript、Vite；开发/构建需 Node.js >= 20，本机初始化使用 Node.js 24.6.0、npm 11.5.1。
