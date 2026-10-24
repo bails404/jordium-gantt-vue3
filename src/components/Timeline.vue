@@ -17,13 +17,22 @@ import MilestonePoint from './MilestonePoint.vue'
 import GanttLinks from './GanttLinks.vue'
 import LinkDragGuide from './LinkDragGuide.vue'
 import GanttConflicts from './Timeline/GanttConflicts.vue'
+import ResourceTaskNavigation from './Timeline/ResourceTaskNavigation.vue'
+import ResourceTaskBars from './Timeline/ResourceTaskBars.vue'
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useI18n } from '../composables/useI18n'
 import { useViewMode } from '../composables/useViewMode' // v1.9.9 视图模式状态管理
 import type { TaskBarConfig } from '../models/configs/TaskBarConfig'
 import { getPredecessorIds } from '../utils/predecessorUtils'
 import { getEffectiveEndDateOnly } from '../utils/dateBoundaryUtils'
-import { getBufferedWindow, getResourceTaskInterval } from '../utils/resourceViewportUtils'
+import {
+  getBufferedWindow,
+  getResourceTaskInterval,
+  getBufferedLaneRange,
+  reuseVisibleRange,
+  type VisibleRange,
+} from '../utils/resourceViewportUtils'
+import { getResourceNavigationItems } from '../utils/resourceNavigationUtils'
 import { createScrollSyncGuard } from '../utils/scrollSync'
 import { perfMonitor } from '../utils/perfMonitor'
 import { perfMonitor2 } from '../utils/perfMonitor2' // v1.9.6 性能诊断工具
@@ -54,6 +63,7 @@ interface Props {
   // 提供时接管自动日期定位；未提供时维持原版自动定位今天的行为。
   focusDate?: Date | string
   resourceTaskBufferScreens?: number
+  showResourceTaskNavigation?: boolean
   useDefaultDrawer?: boolean
   useDefaultMilestoneDialog?: boolean
   onTaskDelete?: (task: Task) => void
@@ -98,6 +108,7 @@ const props = withDefaults(defineProps<Props>(), {
   milestones: () => [],
   focusDate: undefined,
   resourceTaskBufferScreens: undefined,
+  showResourceTaskNavigation: false,
   useDefaultDrawer: true,
   useDefaultMilestoneDialog: true,
   onTaskDelete: undefined,
@@ -123,6 +134,17 @@ const props = withDefaults(defineProps<Props>(), {
   enableParentTaskAutoSchedule: true,
   scaleConfigs: undefined,
 })
+
+// Internal navigation shares the focus/layout pipeline; a new external focus takes precedence.
+const resourceNavigationDate = shallowRef<Date>()
+const requestedFocusDate = computed(() => resourceNavigationDate.value ?? props.focusDate)
+watch(
+  () => props.focusDate,
+  () => {
+    resourceNavigationDate.value = undefined
+  },
+  { flush: 'sync' }
+)
 
 // 定义emits
 const emit = defineEmits<{
@@ -176,7 +198,7 @@ const taskBarRenderKey = ref(0)
 const noConflictTasks: Task[] = []
 const resourceConflictDetails = computed(() => {
   const result = new Map<string, Map<string | number, Task[]>>()
-  if (viewMode.value !== 'resource') return result
+  if (!showConflicts.value || viewMode.value !== 'resource') return result
   for (const resource of dataSource.value as Resource[]) {
     const ids = resourceConflicts.value.get(String(resource.id))
     if (!ids?.size) continue
@@ -719,7 +741,9 @@ const getTasksDateRange = () => {
   if (!cachedTaskDateRange) cachedTaskDateRange = computeTasksDateRange()
   // 受控导航也要支持没有任务的目标日期。
   const focusTime =
-    props.focusDate == null ? NaN : new Date(viewportCenterDate ?? props.focusDate).getTime()
+    requestedFocusDate.value == null
+      ? NaN
+      : new Date(viewportCenterDate ?? requestedFocusDate.value).getTime()
   if (Number.isFinite(focusTime)) {
     return {
       minDate: new Date(Math.min(cachedTaskDateRange?.minDate.getTime() ?? focusTime, focusTime)),
@@ -2100,7 +2124,7 @@ const getDateByScrollPosition = (scrollPosition: number): Date => {
 
 // 计算纵向可视区域的任务范围（支持动态行高）
 let visibleTaskRangeCallCount = 0
-const visibleTaskRange = computed(() => {
+const visibleTaskRange = computed<VisibleRange>(previous => {
   visibleTaskRangeCallCount++
   const scrollTop = timelineBodyScrollTop.value
   const containerHeight = timelineBodyHeight.value || 600
@@ -2139,16 +2163,17 @@ const visibleTaskRange = computed(() => {
       }
     }
 
-    return {
-      startIndex: Math.max(0, startIndex),
-      endIndex: Math.min(resources.length, endIndex),
-    }
+    return reuseVisibleRange(
+      Math.max(0, startIndex),
+      Math.min(resources.length, endIndex),
+      previous
+    )
   } else {
     // 任务视图：per-task 高度支持，使用累计高度数组 + 二分查找
     const cumHeights = taskRowLayouts.value.cumulativeHeights
     const total = tasks.value.length
     if (total === 0 || cumHeights.length <= 1) {
-      return { startIndex: 0, endIndex: 0 }
+      return reuseVisibleRange(0, 0, previous)
     }
 
     // 二分查找：找到 cumulativeHeights[i] <= scrollTop 的最大 i
@@ -2170,10 +2195,11 @@ const visibleTaskRange = computed(() => {
     const scrollBottom = scrollTop + containerHeight
     const endIndex = Math.min(total, findUpperBound(scrollBottom) + VERTICAL_BUFFER + 1)
 
-    return {
+    return reuseVisibleRange(
       startIndex,
-      endIndex: Math.min(total, Math.max(startIndex + 1, endIndex)),
-    }
+      Math.min(total, Math.max(startIndex + 1, endIndex)),
+      previous
+    )
   }
 })
 
@@ -2253,7 +2279,7 @@ const resourceTaskIntervals = computed<
 >(() => {
   if (!bufferedResourceRendering.value) return new Map()
   return new Map(
-    visibleResources.value.map(({ resource }) => [
+    (dataSource.value as Resource[]).map(resource => [
       resource.id,
       (resource.tasks ?? []).map(task => ({
         task,
@@ -2657,6 +2683,41 @@ watch(
   { deep: false }
 )
 
+// Keep the complete layout; only TaskBar mounting is clipped to buffered vertical lanes.
+const resourceLaneOffsets = computed(() => {
+  const result = new Map<string | number, number[]>()
+  if (!bufferedResourceRendering.value) return result
+  for (const { resource } of visibleResources.value) {
+    const heights = resourceTaskLayouts.value.get(resource.id)?.rowHeights
+    if (!heights?.length) continue
+    const offsets = [0]
+    for (const height of heights) offsets.push(offsets[offsets.length - 1] + height)
+    result.set(resource.id, offsets)
+  }
+  return result
+})
+const resourceVisibleLanes = computed<Map<string | number, VisibleRange>>(previous => {
+  // Retain the mounted lanes while dragging/resizing, including automatic scrolling.
+  if (isDraggingTaskBar.value && previous) return previous
+  const result = new Map<string | number, VisibleRange>()
+  const padding = ganttRowHeight.value * 2
+  const top = timelineBodyScrollTop.value
+  const bottom = top + (timelineBodyHeight.value || 600)
+  for (const [id, offsets] of resourceLaneOffsets.value) {
+    const rowTop = resourceRowPositions.value.get(id) ?? 0
+    result.set(
+      id,
+      getBufferedLaneRange(offsets, top - rowTop, bottom - rowTop, padding, previous?.get(id))
+    )
+  }
+  if (
+    previous?.size === result.size &&
+    [...result].every(([id, range]) => previous.get(id) === range)
+  )
+    return previous
+  return result
+})
+
 // v1.9.5 P2-1优化 - 资源视图的可见资源及其水平过滤后的任务
 let filteredTasksCallCount = 0
 const visibleResourcesWithFilteredTasks = computed(() => {
@@ -2712,6 +2773,14 @@ const visibleResourcesWithFilteredTasks = computed(() => {
           })
     }
 
+    const lanes = resourceVisibleLanes.value.get(resource.id)
+    const layout = resourceTaskLayouts.value.get(resource.id)
+    if (lanes && layout) {
+      renderTasks = renderTasks.filter(task => {
+        const lane = layout.taskRowMap.get(task.id) ?? 0
+        return lane >= lanes.startIndex && lane < lanes.endIndex
+      })
+    }
     totalFilteredTasks += renderTasks.length
 
     return {
@@ -2727,6 +2796,69 @@ const visibleResourcesWithFilteredTasks = computed(() => {
 
   return result
 })
+
+// Keep every render-dependent prop in one binding object: the memo uses all its values,
+// so adding a prop cannot silently leave a task bar stale during viewport updates.
+const getResourceTaskBarEntries = (resource: Resource, originalIndex: number) => {
+  const layout = resourceTaskLayouts.value.get(resource.id)
+  return resource.tasks.map(task => ({
+    bindings: {
+      task,
+      rowIndex: originalIndex,
+      rowHeight: resourceViewTaskBarRowHeight.value,
+      taskSubRow: layout?.taskRowMap.get(task.id) || 0,
+      rowHeights: layout?.rowHeights || [resourceViewTaskBarRowHeight.value],
+      dayWidth: dayWidth.value,
+      startDate:
+        currentTimeScale.value === TimelineScale.YEAR
+          ? getYearTimelineRange().startDate
+          : currentTimeScale.value === TimelineScale.MONTH
+            ? getMonthTimelineRange().startDate
+            : timelineConfig.value.startDate,
+      scrollLeft: timelineScrollLeft.value,
+      containerWidth: timelineContainerWidth.value,
+      hideBubbles: hideBubbles.value || resourceNavigationEnabled.value,
+      timelineData:
+        currentTimeScale.value === TimelineScale.HOUR
+          ? optimizedTimelineData.value
+          : timelineData.value,
+      currentTimeScale: currentTimeScale.value,
+      taskBarConfig: props.taskBarConfig,
+      allowDragAndResize: props.allowDragAndResize && !isInHighlightMode.value,
+      showActualTaskbar: props.showActualTaskbar,
+      enableTaskBarTooltip: props.enableTaskBarTooltip,
+      pendingTaskBackgroundColor: props.pendingTaskBackgroundColor,
+      delayTaskBackgroundColor: props.delayTaskBackgroundColor,
+      completeTaskBackgroundColor: props.completeTaskBackgroundColor,
+      ongoingTaskBackgroundColor: props.ongoingTaskBackgroundColor,
+      isHighlighted: highlightedTaskIds.value.has(task.id),
+      isPrimaryHighlight: highlightedTaskId.value === task.id,
+      isInHighlightMode: isInHighlightMode.value,
+      dragLinkMode: dragLinkMode.value,
+      isLinkDragSource: linkDragSourceTask.value?.id === task.id,
+      isValidLinkTarget:
+        linkDragTargetTask.value?.id === task.id && isValidLinkTarget.value === true,
+      isInvalidLinkTarget:
+        linkDragTargetTask.value?.id === task.id && isValidLinkTarget.value === false,
+      allTasks: tasks.value,
+      hasResourceConflict: resourceConflicts.value.get(String(resource.id))?.has(task.id) || false,
+      conflictTasks: getConflictTasksForTask(resource.id, task.id),
+      currentResourceId: resource.id,
+      resources: dataSource.value as Resource[],
+    },
+  }))
+}
+
+// Vertical pixel updates (navigation, hover and canvas) do not change bar bindings.
+// Evaluate them only when their actual data, scale or clipped task lists change.
+const resourceTaskBarEntries = computed(() =>
+  new Map(
+    visibleResourcesWithFilteredTasks.value.map(({ resource, originalIndex }) => [
+      resource.id,
+      getResourceTaskBarEntries(resource, originalIndex),
+    ])
+  )
+)
 
 // 防抖处理滚动事件（优化：增加防抖时间）
 const debounce = <T extends (...args: unknown[]) => void>(func: T, wait: number): T => {
@@ -3671,7 +3803,7 @@ watch(
 // 将今日定位到时间线中间位置
 const scrollToTodayCenter = (retry = 0) => {
   // 宿主已指定目标日期，避免初始化、切换刻度、资源刷新再次滚回今天。
-  if (props.focusDate != null) return
+  if (requestedFocusDate.value != null) return
   // 开始滚动时隐藏半圆
   hideBubbles.value = true
   isInitialScrolling.value = true
@@ -4113,7 +4245,8 @@ const getDatePixelOffset = (date: Date | string): number => {
     )
   } else if (currentTimeScale.value === TimelineScale.MONTH) {
     // 受控导航保持已有时间原点，搜索/筛选后不能改用缩小的任务范围。
-    const monthRange = props.focusDate != null ? timelineConfig.value : getMonthTimelineRange()
+    const monthRange =
+      requestedFocusDate.value != null ? timelineConfig.value : getMonthTimelineRange()
     startNormalized = new Date(
       monthRange.startDate.getFullYear(),
       monthRange.startDate.getMonth(),
@@ -4269,11 +4402,42 @@ const scrollToDate = (date: Date | string, behavior: ScrollBehavior = 'smooth') 
       timelineScrollLeft.value = timeline.scrollLeft
       dateNavigationPending = false
       emit('focus-date-settled', targetDate)
+      if (resourceNavigationDate.value?.getTime() === targetDate.getTime()) {
+        emit('viewport-date-change', targetDate)
+      }
     } else {
       focusScrollFrame = requestAnimationFrame(settle)
     }
   }
   focusScrollFrame = requestAnimationFrame(settle)
+}
+
+const resourceNavigationEnabled = computed(
+  () => props.showResourceTaskNavigation && viewMode.value === 'resource'
+)
+const resourceNavigationItems = computed(() => {
+  if (!resourceNavigationEnabled.value) return []
+  return visibleResources.value
+    .filter(({ resource }) => !resource.groupHeader)
+    .map(({ resource }) => ({
+      id: resource.id,
+      name: resource.name,
+      top: resourceRowPositions.value.get(resource.id) ?? 0,
+      height: resourceTaskLayouts.value.get(resource.id)?.totalHeight ?? ganttRowHeight.value,
+      items: getResourceNavigationItems(
+        resource.tasks ?? [],
+        currentTimeScale.value === TimelineScale.HOUR,
+        getDatePixelOffset
+      ),
+    }))
+})
+// Pass refs as a stable object: per-pixel navigation updates belong to the overlay,
+// without invalidating Timeline's TaskBar render tree.
+const resourceNavigationViewport = {
+  top: timelineBodyScrollTop,
+  left: timelineScrollLeft,
+  width: timelineContainerWidth,
+  height: timelineBodyHeight,
 }
 
 // 日期、刻度与数据范围可能在同一次交互中依次更新（范围计算防抖 50ms）。
@@ -4284,13 +4448,13 @@ let focusedScale: TimelineScale | undefined
 let focusedCellWidth: number | undefined
 watch(
   [
-    () => props.focusDate,
+    () => requestedFocusDate.value,
     timelineData,
     currentTimeScale,
     () => effectiveScaleConfigs.value[currentTimeScale.value].cellWidth,
   ],
   ([focus, , scale, cellWidth], [previousFocus, , previousScale, previousCellWidth]) => {
-    if (props.focusDate == null) return
+    if (requestedFocusDate.value == null) return
     // 数据随手动滚动更新时，仅保留视口；只有新的定位请求才滚动。
     if (
       focus !== previousFocus ||
@@ -4306,7 +4470,7 @@ watch(
     clearTimeout(viewportDateTimer)
     cancelAnimationFrame(focusScrollFrame)
     focusScrollTimer = setTimeout(() => {
-      const target = props.focusDate
+      const target = requestedFocusDate.value
       if (target == null || !timelineContainerElement.value) return
       const targetDate = new Date(target)
       // 周/月视图同为按天绘制，但格宽不同；缩放切换直接定位，避免跨越大量日期。
@@ -4330,7 +4494,7 @@ onUnmounted(() => {
 })
 
 function cancelDateNavigation() {
-  if (!dateNavigationPending || props.focusDate == null) return
+  if (!dateNavigationPending || requestedFocusDate.value == null) return
   clearTimeout(focusScrollTimer)
   cancelAnimationFrame(focusScrollFrame)
   dateNavigationPending = false
@@ -5287,7 +5451,7 @@ const handleTimelineScroll = (event: Event) => {
 
   // 立即更新关键滚动位置信息（用于虚拟滚动）
   timelineScrollLeft.value = scrollLeft
-  if (horizontalChanged && props.focusDate != null && !dateNavigationPending) {
+  if (horizontalChanged && requestedFocusDate.value != null && !dateNavigationPending) {
     scheduleViewportDateSync(target)
   }
 
@@ -5730,7 +5894,7 @@ const updateTimelineRange = () => {
   }
 
   if (newRange) {
-    const controlled = props.focusDate != null && hasFocusedDate
+    const controlled = requestedFocusDate.value != null && hasFocusedDate
     const anchor = new Date()
     const anchorBefore = controlled ? getDatePixelOffset(anchor) : 0
     const scrollBefore = timelineContainerElement.value?.scrollLeft ?? 0
@@ -5773,9 +5937,9 @@ const updateTimelineRange = () => {
 }
 
 watch(
-  () => props.focusDate,
+  () => requestedFocusDate.value,
   () => {
-    if (props.focusDate == null) return
+    if (requestedFocusDate.value == null) return
     forceTimelineRangeInResourceView = true
     debouncedUpdateTimelineRange()
   }
@@ -5817,7 +5981,7 @@ watch([timelineData, timelineContainerWidth], () => {
     allBarPositions.value = {}
     scheduleSeedFill(true)
     // 受控资源导航由响应式日期参数更新位置，保留已有任务 DOM，避免先卸载再滚动。
-    if (props.focusDate == null) taskBarRenderKey.value++
+    if (requestedFocusDate.value == null) taskBarRenderKey.value++
     // 延迟更新SVG尺寸
     nextTick(() => {
       setTimeout(() => {
@@ -5933,7 +6097,7 @@ const generateMonthTimelineData = () => {
   // 根据时间刻度动态调整时间范围
   let startDate: Date, endDate: Date
 
-  if (currentTimeScale.value === TimelineScale.MONTH && props.focusDate == null) {
+  if (currentTimeScale.value === TimelineScale.MONTH && requestedFocusDate.value == null) {
     // 月度视图使用任务范围+2年
     const monthRange = getMonthTimelineRange()
     startDate = monthRange.startDate
@@ -6161,6 +6325,30 @@ const handleAddPredecessor = (task: Task) => {
 // 添加后置任务事件
 const handleAddSuccessor = (task: Task) => {
   emit('add-successor', task)
+}
+
+// Stable event callbacks shared by resource task bars.
+const resourceTaskBarHandlers = {
+  'update:task': updateTask,
+  'bar-mounted': handleBarMounted,
+  click: handleTaskBarClick,
+  dblclick: handleTaskBarDoubleClick,
+  'drag-end': handleTaskBarDragEnd,
+  'resize-end': handleTaskBarResizeEnd,
+  'scroll-to-position': handleScrollToPosition,
+  'context-menu': handleTaskBarContextMenu,
+  'start-timer': handleStartTimer,
+  'stop-timer': handleStopTimer,
+  'add-predecessor': handleAddPredecessor,
+  'add-successor': handleAddSuccessor,
+  delete: handleTaskDelete,
+  'delete-link': handleDeleteLink,
+  'long-press': setHighlightTask,
+  'link-drag-start': handleLinkDragStart,
+  'link-drag-move': handleLinkDragMove,
+  'link-drag-end': handleLinkDragEnd,
+  'tooltip-show': handleTooltipShow,
+  'tooltip-hide': handleTooltipHide,
 }
 </script>
 
@@ -6859,8 +7047,8 @@ const handleAddSuccessor = (task: Task) => {
                 :all-tasks="tasks"
                 @update:task="updateTask"
                 @bar-mounted="handleBarMounted"
-                @click="handleTaskBarClick(task, $event)"
-                @dblclick="handleTaskBarDoubleClick(task)"
+                @click="handleTaskBarClick"
+                @dblclick="handleTaskBarDoubleClick"
                 @drag-end="handleTaskBarDragEnd"
                 @resize-end="handleTaskBarResizeEnd"
                 @scroll-to-position="handleScrollToPosition"
@@ -6892,7 +7080,7 @@ const handleAddSuccessor = (task: Task) => {
 
             <!-- 资源视图：一行渲染多个 TaskBar -->
             <div
-              v-for="{ resource, originalIndex } in visibleResourcesWithFilteredTasks"
+              v-for="{ resource } in visibleResourcesWithFilteredTasks"
               v-else-if="viewMode === 'resource'"
               :key="resource.id"
               class="task-row resource-row"
@@ -6906,81 +7094,11 @@ const handleAddSuccessor = (task: Task) => {
             >
               <!-- 为资源下的每个任务渲染 TaskBar -->
               <template v-if="(resource as any).tasks && (resource as any).tasks.length > 0">
-                <TaskBar
-                  v-for="task in (resource as any).tasks"
-                  :key="`taskbar-${task.id}-${taskBarRenderKey}`"
-                  :task="task"
-                  :row-index="originalIndex"
-                  :row-height="resourceViewTaskBarRowHeight"
-                  :task-sub-row="
-                    resourceTaskLayouts?.get(resource.id)?.taskRowMap.get(task.id) || 0
-                  "
-                  :row-heights="
-                    resourceTaskLayouts?.get(resource.id)?.rowHeights || [
-                      resourceViewTaskBarRowHeight,
-                    ]
-                  "
-                  :day-width="dayWidth"
-                  :start-date="
-                    currentTimeScale === TimelineScale.YEAR
-                      ? getYearTimelineRange().startDate
-                      : currentTimeScale === TimelineScale.MONTH
-                        ? getMonthTimelineRange().startDate
-                        : timelineConfig.startDate
-                  "
-                  :scroll-left="timelineScrollLeft"
-                  :container-width="timelineContainerWidth"
-                  :hide-bubbles="hideBubbles"
-                  :timeline-data="
-                    currentTimeScale === TimelineScale.HOUR ? optimizedTimelineData : timelineData
-                  "
-                  :current-time-scale="currentTimeScale"
-                  :task-bar-config="props.taskBarConfig"
-                  :allow-drag-and-resize="props.allowDragAndResize && !isInHighlightMode"
-                  :show-actual-taskbar="props.showActualTaskbar"
-                  :enable-task-bar-tooltip="props.enableTaskBarTooltip"
-                  :pending-task-background-color="props.pendingTaskBackgroundColor"
-                  :delay-task-background-color="props.delayTaskBackgroundColor"
-                  :complete-task-background-color="props.completeTaskBackgroundColor"
-                  :ongoing-task-background-color="props.ongoingTaskBackgroundColor"
-                  :is-highlighted="highlightedTaskIds.has(task.id)"
-                  :is-primary-highlight="highlightedTaskId === task.id"
-                  :is-in-highlight-mode="isInHighlightMode"
-                  :drag-link-mode="dragLinkMode"
-                  :is-link-drag-source="linkDragSourceTask?.id === task.id"
-                  :is-valid-link-target="
-                    linkDragTargetTask?.id === task.id && isValidLinkTarget === true
-                  "
-                  :is-invalid-link-target="
-                    linkDragTargetTask?.id === task.id && isValidLinkTarget === false
-                  "
-                  :all-tasks="tasks"
-                  :has-resource-conflict="
-                    resourceConflicts.get(String(resource.id))?.has(task.id) || false
-                  "
-                  :conflict-tasks="getConflictTasksForTask(resource.id, task.id)"
-                  :current-resource-id="resource.id"
-                  :resources="dataSource as Resource[]"
-                  @update:task="updateTask"
-                  @bar-mounted="handleBarMounted"
-                  @click="handleTaskBarClick(task, $event)"
-                  @dblclick="handleTaskBarDoubleClick(task)"
-                  @drag-end="handleTaskBarDragEnd"
-                  @resize-end="handleTaskBarResizeEnd"
-                  @scroll-to-position="handleScrollToPosition"
-                  @context-menu="handleTaskBarContextMenu"
-                  @start-timer="handleStartTimer"
-                  @stop-timer="handleStopTimer"
-                  @add-predecessor="handleAddPredecessor"
-                  @add-successor="handleAddSuccessor"
-                  @delete="handleTaskDelete"
-                  @delete-link="handleDeleteLink"
-                  @long-press="setHighlightTask"
-                  @link-drag-start="handleLinkDragStart"
-                  @link-drag-move="handleLinkDragMove"
-                  @link-drag-end="handleLinkDragEnd"
-                  @tooltip-show="handleTooltipShow"
-                  @tooltip-hide="handleTooltipHide"
+                <ResourceTaskBars
+                  :entries="resourceTaskBarEntries.get(resource.id)!"
+                  :render-key="taskBarRenderKey"
+                  :handlers="resourceTaskBarHandlers"
+                  :source-slots="$slots"
                 >
                   <template v-if="$slots['custom-task-content']" #custom-task-content="barScope">
                     <slot name="custom-task-content" v-bind="barScope" />
@@ -6991,7 +7109,7 @@ const handleAddSuccessor = (task: Task) => {
                   >
                     <slot name="task-bar-context-menu" v-bind="contextMenuScope" />
                   </template>
-                </TaskBar>
+                </ResourceTaskBars>
 
                 <!-- v1.9.2 资源冲突可视化层 -->
                 <!-- v1.9.5 P2-1修复：使用原始完整的任务列表进行冲突检测 -->
@@ -7032,6 +7150,12 @@ const handleAddSuccessor = (task: Task) => {
             </div>
           </div>
         </div>
+        <ResourceTaskNavigation
+          v-if="resourceNavigationEnabled"
+          :items="resourceNavigationItems"
+          :viewport="resourceNavigationViewport"
+          @navigate="resourceNavigationDate = $event"
+        />
       </div>
     </div>
   </div>

@@ -1,6 +1,7 @@
 import { ref, computed, inject, type Ref, type ComputedRef } from 'vue'
 import type { Task } from '../../../../models/classes/Task'
 import type { Resource } from '../../../../models/classes/Resource'
+import { reuseVisibleRange } from '../../../../utils/resourceViewportUtils'
 
 /**
  * TaskList 布局计算逻辑
@@ -59,11 +60,13 @@ export function useTaskListLayout(tasks: Ref<Task[]>) {
   )
 
   // v1.12.x: per-task 行高布局（累计位置），替代 ganttRowHeight * index 固定乘法
-  const taskRowLayouts = inject<ComputedRef<{
-    cumulativeHeights: number[]
-    totalHeight: number
-    taskHeights: Map<string | number, number>
-  }>>(
+  const taskRowLayouts = inject<
+    ComputedRef<{
+      cumulativeHeights: number[]
+      totalHeight: number
+      taskHeights: Map<string | number, number>
+    }>
+  >(
     'taskRowLayouts',
     computed(() => ({ cumulativeHeights: [0], totalHeight: 0, taskHeights: new Map() }))
   )
@@ -132,13 +135,13 @@ export function useTaskListLayout(tasks: Ref<Task[]>) {
    * - 任务视图：固定行高，O(1) 公式直接计算（不依赖 cumulativeHeights）
    * - 资源视图：动态行高，使用累计高度数组 + 二分查找
    */
-  const visibleTaskRange = computed<VisibleTaskRange>(() => {
+  const visibleTaskRange = computed<VisibleTaskRange>(previous => {
     const scrollTop = taskListScrollTop.value
     const containerHeight = taskListBodyHeight.value || 600
 
     if (viewMode.value === 'resource') {
       const heights = cumulativeHeights.value
-      if (heights.length <= 1) return { startIndex: 0, endIndex: 0 }
+      if (heights.length <= 1) return reuseVisibleRange(0, 0, previous)
 
       const total = (dataSource.value as Resource[]).length
       let startIndex = Math.max(0, findIndexByScrollTop(scrollTop) - VERTICAL_BUFFER)
@@ -147,18 +150,16 @@ export function useTaskListLayout(tasks: Ref<Task[]>) {
         heights.length - 1,
         findIndexByScrollTop(scrollBottom) + VERTICAL_BUFFER + 1
       )
-      return {
-        startIndex: Math.min(startIndex, total),
-        endIndex: Math.min(endIndex, total),
-      }
+      return reuseVisibleRange(Math.min(startIndex, total), Math.min(endIndex, total), previous)
     } else {
       // 任务视图：per-task 高度支持，使用累计高度数组 + 二分查找
       const cumHeights = taskRowLayouts.value.cumulativeHeights
       const total = flattenedTasks.value.length
-      if (total === 0 || cumHeights.length <= 1) return { startIndex: 0, endIndex: 0 }
+      if (total === 0 || cumHeights.length <= 1) return reuseVisibleRange(0, 0, previous)
 
       const findUpperBound = (target: number): number => {
-        let left = 0, right = cumHeights.length - 1
+        let left = 0,
+          right = cumHeights.length - 1
         while (left < right) {
           const mid = Math.floor((left + right) / 2)
           if (cumHeights[mid] <= target) {
@@ -172,14 +173,12 @@ export function useTaskListLayout(tasks: Ref<Task[]>) {
 
       const startIndex = Math.max(0, findUpperBound(scrollTop) - VERTICAL_BUFFER)
       const scrollBottom = scrollTop + containerHeight
-      const endIndex = Math.min(
-        total,
-        findUpperBound(scrollBottom) + VERTICAL_BUFFER + 1
-      )
-      return {
+      const endIndex = Math.min(total, findUpperBound(scrollBottom) + VERTICAL_BUFFER + 1)
+      return reuseVisibleRange(
         startIndex,
-        endIndex: Math.min(total, Math.max(startIndex + 1, endIndex)),
-      }
+        Math.min(total, Math.max(startIndex + 1, endIndex)),
+        previous
+      )
     }
   })
 

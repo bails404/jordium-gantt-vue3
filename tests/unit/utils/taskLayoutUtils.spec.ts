@@ -7,10 +7,59 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { hasTimeOverlap } from '../../../src/utils/taskLayoutUtils'
+import { assignTaskRows, hasTimeOverlap } from '../../../src/utils/taskLayoutUtils'
 import type { Task } from '../../../src/models/classes/Task'
 
 describe('taskLayoutUtils', () => {
+  describe('cached layout intervals', () => {
+    const tasks = [
+      ['2026-03-24 11:46:31', '2026-03-24 11:46:31'],
+      ['2026-03-24 11:46:31', '2026-03-24 11:46:31'],
+      ['2026-03-24 08:00', '2026-03-25 00:00'],
+      ['2026-03-25 00:00', '2026-03-25 12:00'],
+      ['2026-03-24', '2026-03-25'],
+      [undefined, undefined],
+      ['invalid', 'invalid'],
+    ].map(([startDate, endDate], id) => ({ id, name: `task ${id}`, startDate, endDate }))
+
+    it.each(['hour', 'day', 'week', 'month'])(
+      'preserves greedy lane assignment at %s scale',
+      scale => {
+        // Reference pairwise packing used before pre-parsing, including malformed dates.
+        const lanes: Task[][] = []
+        const expected = new Map<number, number>()
+        const sorted = [...tasks].sort(
+          (a, b) =>
+            (a.startDate ? Date.parse(a.startDate) : 0) -
+            (b.startDate ? Date.parse(b.startDate) : 0)
+        )
+        for (const task of sorted) {
+          let lane = lanes.findIndex(items =>
+            items.every(other => !hasTimeOverlap(task, other, scale))
+          )
+          if (lane < 0) {
+            lane = lanes.length
+            lanes.push([])
+          }
+          lanes[lane].push(task)
+          expected.set(task.id, lane)
+        }
+        const actual = assignTaskRows(tasks, 60, scale)
+        expect(actual.taskRowMap).toEqual(expected)
+        expect(actual.rowHeights).toEqual(lanes.map((_, i) => (i === 0 ? 60 : 55)))
+        expect(actual.taskRowMap.size).toBe(tasks.length)
+      }
+    )
+
+    it('keeps independent rows, empty input and task updates correct', () => {
+      expect(assignTaskRows([], 60).totalHeight).toBe(60)
+      expect(assignTaskRows(tasks, 60, 'hour', false).rowHeights).toHaveLength(tasks.length)
+      const pair = tasks.slice(0, 2).map(task => ({ ...task }))
+      expect(assignTaskRows(pair, 60, 'hour').taskRowMap.get(1)).toBe(1)
+      pair[1].startDate = pair[1].endDate = '2026-03-26 11:46:31'
+      expect(assignTaskRows(pair, 60, 'hour').taskRowMap.get(1)).toBe(0)
+    })
+  })
   describe('hasTimeOverlap', () => {
     it('纯日期任务：结束日与另一任务开始日相同应视为重叠（endDate 含当天）', () => {
       const taskA: Task = {

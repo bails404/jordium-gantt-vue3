@@ -23,6 +23,7 @@ import type { TaskBarConfig } from '../models/configs/TaskBarConfig'
 import { DEFAULT_TASK_BAR_CONFIG } from '../models/configs/TaskBarConfig'
 import type { PositionCache } from '../utils/positionCache' // v1.9.6 Phase1 位置计算缓存
 import { getEffectiveEndDateOnly } from '../utils/dateBoundaryUtils' // v1.13.5 endDate带time部分时的有效日期边界计算
+import { observeElementSizes } from '../utils/sharedResizeObserver'
 
 // 禁用自动继承attributes，手动应用到wrapper
 defineOptions({
@@ -515,7 +516,7 @@ watch(
   [fullTitleOnly, taskBarContentRef, titleMeasureRef],
   ([enabled, content, measure], _, onCleanup) => {
     if (!enabled || !content || !measure) return
-    const observer = new ResizeObserver(entries => {
+    const stopObserving = observeElementSizes([content, measure], entries => {
       const metrics = { ...titleMetrics.value }
       for (const entry of entries) {
         if (entry.target === measure) {
@@ -533,9 +534,7 @@ watch(
       }
       titleMetrics.value = metrics
     })
-    observer.observe(content)
-    observer.observe(measure)
-    onCleanup(() => observer.disconnect())
+    onCleanup(stopObserving)
   },
   { flush: 'post' }
 )
@@ -2394,7 +2393,7 @@ const handleMouseUp = () => {
 }
 
 // ResizeObserver 引用（在组件卸载时清理）
-let nameResizeObserver: ResizeObserver | null = null
+let stopObservingName: (() => void) | undefined
 
 onMounted(() => {
   nextTick(() => {
@@ -2402,12 +2401,11 @@ onMounted(() => {
 
     // 使用 ResizeObserver 监听任务名称宽度变化
     if (taskBarNameRef.value) {
-      nameResizeObserver = new ResizeObserver(entries => {
+      stopObservingName = observeElementSizes([taskBarNameRef.value], entries => {
         for (const entry of entries) {
           if (!fullTitleOnly.value) nameTextWidth.value = entry.contentRect.width
         }
       })
-      nameResizeObserver.observe(taskBarNameRef.value)
     }
   })
 
@@ -2449,10 +2447,8 @@ onMounted(() => {
   // 清理函数
   onUnmounted(() => {
     // 清理 ResizeObserver
-    if (nameResizeObserver) {
-      nameResizeObserver.disconnect()
-      nameResizeObserver = null
-    }
+    stopObservingName?.()
+    stopObservingName = undefined
 
     window.removeEventListener('timeline-scale-updated', handleTimelineScaleUpdate)
     window.removeEventListener('timeline-force-recalculate', handleForceRecalculate)

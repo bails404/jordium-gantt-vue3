@@ -108,6 +108,7 @@ const props = withDefaults(defineProps<Props>(), {
   timeScale: 'week',
   focusDate: undefined,
   resourceTaskBufferScreens: undefined,
+  showResourceTaskNavigation: false,
   theme: undefined, // 不设置默认值，允许自动检测系统主题
   enableTaskListCollapsible: true,
   taskListVisible: true,
@@ -417,7 +418,12 @@ const resourceRowPositions = computed(() => {
 
 // 计算资源冲突状态（v2.0 优化：方案1增量更新 + 方案2缓存机制）
 // v1.9.9 修复：使用 detectConflicts 函数来正确检测多任务叠加的超载情况
+let needsFullConflictUpdate = false
 const resourceConflicts = computed(() => {
+  if (!props.showConflicts) {
+    needsFullConflictUpdate = true
+    return new Map<string, Set<number | string>>()
+  }
   if (currentViewMode.value !== 'resource') return new Map()
 
   const resources = currentDataSource.value as Resource[]
@@ -428,7 +434,10 @@ const resourceConflicts = computed(() => {
     // v2.0 方案1：增量更新逻辑 - 只处理受影响的资源
     const affectedResourceIds = lastChangedResourceIds.value
     const shouldDoIncrementalUpdate =
-      affectedResourceIds.size > 0 && affectedResourceIds.size < resources.length * 0.3
+      !needsFullConflictUpdate &&
+      affectedResourceIds.size > 0 &&
+      affectedResourceIds.size < resources.length * 0.3
+    needsFullConflictUpdate = false
 
     if (shouldDoIncrementalUpdate) {
       // 🎯 增量更新：只重新计算受影响的资源
@@ -743,6 +752,8 @@ interface Props {
   focusDate?: Date | string
   /** 资源视图小时/日/月刻度的横向绘制缓冲（屏数）；不传则保留原版渲染策略。 */
   resourceTaskBufferScreens?: number
+  /** Fork: per-resource navigation to the nearest offscreen task; preserves task virtualization. */
+  showResourceTaskNavigation?: boolean
   // 主题模式（响应式）
   theme?: 'light' | 'dark'
   /**
@@ -4448,6 +4459,7 @@ defineExpose({
             ref="timelineRef"
             :focus-date="props.focusDate"
             :resource-task-buffer-screens="props.resourceTaskBufferScreens"
+            :show-resource-task-navigation="props.showResourceTaskNavigation"
             @focus-date-settled="emit('focus-date-settled', $event)"
             @viewport-date-change="emit('viewport-date-change', $event)"
             :tasks="tasksForTimeline"

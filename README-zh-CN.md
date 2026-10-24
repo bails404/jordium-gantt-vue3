@@ -262,6 +262,7 @@ npm run dev
 | --- | --- | --- | --- |
 | `focusDate` **Fork** | `Date \| string` | `undefined` | 在布局就绪后将指定日期定位到时间轴中央；不传时保留上游自动定位策略。 |
 | `resourceTaskBufferScreens` **Fork** | `number` | `undefined` | 左右各预绘制多少屏；须为有限非负数，仅用于资源视图的 hour/day/month 刻度。不传保留上游策略，当前资源页设为 `2`。 |
+| `showResourceTaskNavigation` **Fork** | `boolean` | `false` | 在可见资源行两侧显示最近的视野外任务定位按钮：左侧按结束时间、右侧按开始时间选最近任务，点击定位到其开始日期。支持零时长任务，保留横向缓冲和纵向虚拟化；开启时替代资源视图的逐任务边缘圆点，无对应任务或分组标题不显示。定位完成后通过 `viewport-date-change` 同步目标日期。 |
 
 | 属性名                      | 类型                                                                                      | 默认值  | 说明                                                           |
 | --------------------------- | ----------------------------------------------------------------------------------------- | ------- | -------------------------------------------------------------- |
@@ -297,7 +298,7 @@ npm run dev
 | `enableTaskbarTooltip` ![v1.8.0](https://img.shields.io/badge/v1.8.0-409EFF?style=flat-square&labelColor=ECF5FF) | `boolean`                                                                                 | `true` | 是否启用TaskBar悬停提示框（鼠标悬停显示任务详情）  |
 | `enableMilestoneTooltip` ![v1.10.2](https://img.shields.io/badge/v1.10.2-409EFF?style=flat-square&labelColor=ECF5FF) | `boolean`                                                                                 | `true` | 是否启用里程碑悬停提示框（鼠标悬停显示里程碑名称和日期）  |
 | `milestoneLabelPosition` ![v1.13.5](https://img.shields.io/badge/v1.13.5-409EFF?style=flat-square&labelColor=ECF5FF) | `'left' \| 'top' \| 'right' \| 'bottom'` | `'right'` | 里程碑标签相对于图标（或自定义 `custom-milestone-content` 插槽内容）的展示位置，默认值与改造前的硬编码行为一致 |
-| `showConflicts` ![v1.9.0](https://img.shields.io/badge/v1.9.0-409EFF?style=flat-square&labelColor=ECF5FF) | `boolean`                                                                                 | `true` | 是否显示资源冲突可视化层（资源视图下显示斜纹背景标识超载区域） |
+| `showConflicts` ![v1.9.0](https://img.shields.io/badge/v1.9.0-409EFF?style=flat-square&labelColor=ECF5FF) | `boolean`                                                                                 | `true` | 是否显示资源冲突；Fork：关闭时跳过检测、详情及资源行超载提示，开启时复用缓存结果 |
 | `showTaskbarTab` ![v1.9.0](https://img.shields.io/badge/v1.9.0-409EFF?style=flat-square&labelColor=ECF5FF) | `boolean`                                                                                 | `true` | 是否显示TaskBar上的资源Tab标签（资源视图下TaskBar的资源分配标签） |
 | `enableTaskListCollapsible` ![v1.9.2](https://img.shields.io/badge/v1.9.2-409EFF?style=flat-square&labelColor=ECF5FF) | `boolean`                                                                                 | `true` | 是否允许折叠/展开 TaskList 面板。`false` 时强制隐藏 TaskList、SplitterBar 及折叠按钮，Timeline 独占全宽 |
 | `taskListVisible` ![v1.9.2](https://img.shields.io/badge/v1.9.2-409EFF?style=flat-square&labelColor=ECF5FF) | `boolean`                                                                                 | `true` | 控制 TaskList 的显隐状态（响应式）。仅在 `enableTaskListCollapsible=true` 时有效 |
@@ -1477,7 +1478,7 @@ const resource = {
 | `resourceListConfig`  | `ResourceListConfig`  | `undefined`  | 资源列表配置，类似 TaskListConfig，用于配置资源列表的列定义、宽度等         |
 | `resourceTypeOptions` ![v1.13.5](https://img.shields.io/badge/v1.13.5-409EFF?style=flat-square&labelColor=ECF5FF) | `ResourceTypeOption[]`（`{ value: string; label: string }`） | `[]`         | 自定义 TaskDrawer 资源分配行“类别”下拉的可选项集合，不设置或传空数组时使用内置的 人力(Human)/设备(Device)/其他(Others)。`label` 完全由外部提供，可实现自定义类别集合或多语言。详见下方「自定义资源类别」示例 |
 | `showResourceTypeOption` ![v1.13.5](https://img.shields.io/badge/v1.13.5-409EFF?style=flat-square&labelColor=ECF5FF) | `boolean`             | `true`       | 是否展示 TaskDrawer 资源分配行的“类别”下拉选项。设为 `false` 可完全隐藏该列（仍会按 `'Human'` 默认写入 `resource.type`，不影响数据本身） |
-| `showConflicts`       | `boolean`             | `true`       | 是否显示资源冲突可视化层（资源视图下显示斜纹背景标识超载区域）              |
+| `showConflicts`       | `boolean`             | `true`       | 是否显示资源冲突；Fork：关闭时跳过检测、详情及资源行超载提示，开启时复用缓存结果              |
 | `showTaskbarTab`      | `boolean`             | `true`       | 是否显示TaskBar上的资源Tab标签（资源视图下TaskBar上的资源占用比例标签）     |
 
 #### 资源事件

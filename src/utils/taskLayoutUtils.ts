@@ -16,45 +16,32 @@ const FIFTEEN_MINUTES_MS = 15 * 60 * 1000
  * @param timeScale 当前时间刻度，小时视图('hour')下使用15分钟精度判断
  */
 export function hasTimeOverlap(task1: Task, task2: Task, timeScale?: string): boolean {
-  // 获取任务的开始和结束日期
-  const start1Date = task1.startDate ? new Date(task1.startDate) : null
-  const end1Date = task1.endDate ? new Date(task1.endDate) : null
-  const start2Date = task2.startDate ? new Date(task2.startDate) : null
-  const end2Date = task2.endDate ? new Date(task2.endDate) : null
+  return intervalsOverlap(prepareLayoutTask(task1, timeScale), prepareLayoutTask(task2, timeScale))
+}
 
-  // 如果任一任务缺少日期信息，视为无交集
-  if (!start1Date || !end1Date || !start2Date || !end2Date) {
-    return false
+// Parse once per task when laying out a resource, rather than on every pair comparison.
+function prepareLayoutTask(task: Task, timeScale?: string) {
+  const startDate = task.startDate ? new Date(task.startDate) : null
+  const endDate = task.endDate ? new Date(task.endDate) : null
+  const sortStart = startDate?.getTime() ?? 0
+  let start = NaN
+  let end = NaN
+  if (startDate && endDate) {
+    if (timeScale === 'hour') {
+      start = Math.floor(sortStart / FIFTEEN_MINUTES_MS) * FIFTEEN_MINUTES_MS
+      end = Math.ceil(endDate.getTime() / FIFTEEN_MINUTES_MS) * FIFTEEN_MINUTES_MS
+    } else {
+      start = sortStart
+      // Preserve date-only/inclusive and explicit midnight end-date semantics.
+      end = getEffectiveEndDateOnly(task.endDate, endDate).getTime() + 24 * 60 * 60 * 1000
+    }
   }
+  return { task, sortStart, start, end }
+}
 
-  const start1 = start1Date.getTime()
-  const end1 = end1Date.getTime()
-  const start2 = start2Date.getTime()
-  const end2 = end2Date.getTime()
-
-  if (timeScale === 'hour') {
-    // 小时视图：按15分钟粒度取整后做精确区间判断，避免+1天偏移导致同天不重叠任务被错误分行
-    const s1 = Math.floor(start1 / FIFTEEN_MINUTES_MS) * FIFTEEN_MINUTES_MS
-    const e1 = Math.ceil(end1 / FIFTEEN_MINUTES_MS) * FIFTEEN_MINUTES_MS
-    const s2 = Math.floor(start2 / FIFTEEN_MINUTES_MS) * FIFTEEN_MINUTES_MS
-    const e2 = Math.ceil(end2 / FIFTEEN_MINUTES_MS) * FIFTEEN_MINUTES_MS
-    return e1 > s2 && e2 > s1
-  }
-
-  // 日/周/月/季度/年视图：endDate包含当天，需要+1天来判断交集
-  // 例如：task1结束于2025-01-29，task2开始于2025-01-29
-  // end1Plus = 2025-01-30，start2 = 2025-01-29
-  // 判断：end1Plus(2025-01-30) > start2(2025-01-29) 为true，所以它们重叠
-  //
-  // v1.13.5：若 endDate 显式带 time 部分（如 TaskDrawer 编辑保存后写入的
-  // '2025-08-01 00:00'，语义上是"7月31日结束"），需先经 getEffectiveEndDateOnly
-  // 修正（-15分钟再截断）再 +1天，避免把次日0点误当成占满当天，导致资源视图
-  // 中本不重叠的两个任务被错误换行（详见 .ai/.claude/requirments/v1.13.5.md 第9节）
-  const end1Plus = getEffectiveEndDateOnly(task1.endDate, end1Date).getTime() + 24 * 60 * 60 * 1000
-  const end2Plus = getEffectiveEndDateOnly(task2.endDate, end2Date).getTime() + 24 * 60 * 60 * 1000
-
-  // 判断是否有交集
-  return end1Plus > start2 && end2Plus > start1
+type LayoutTask = ReturnType<typeof prepareLayoutTask>
+function intervalsOverlap(a: LayoutTask, b: LayoutTask): boolean {
+  return a.end > b.start && b.end > a.start
 }
 
 /**
@@ -86,17 +73,15 @@ export function assignTaskRows(
   }
 
   // 按开始时间排序任务
-  const sortedTasks = [...tasks].sort((a, b) => {
-    const timeA = a.startDate ? new Date(a.startDate).getTime() : 0
-    const timeB = b.startDate ? new Date(b.startDate).getTime() : 0
-    return timeA - timeB
-  })
+  const sortedTasks = tasks
+    .map(task => prepareLayoutTask(task, timeScale))
+    .sort((a, b) => a.sortStart - b.sortStart)
 
   // v1.12.0 独立行模式：禁用堆叠时，每个任务按排序顺序独占一行
   if (!enableLaneStacking) {
     const baseTaskBarHeight = baseRowHeight - 10
     sortedTasks.forEach((task, index) => {
-      taskRowMap.set(task.id, index)
+      taskRowMap.set(task.task.id, index)
       const rowHeight =
         index === 0
           ? 5 + baseTaskBarHeight + 5 // 第一行：5 + 41 + 5 = 51px
@@ -108,7 +93,7 @@ export function assignTaskRows(
   }
 
   // 记录每一行的所有任务
-  const rowTasks: Task[][] = []
+  const rowTasks: LayoutTask[][] = []
 
   for (const task of sortedTasks) {
     // 查找第一个不冲突的行
@@ -120,7 +105,7 @@ export function assignTaskRows(
       // 检查当前任务是否与该行的所有任务都不冲突
       let hasConflict = false
       for (const taskInRow of tasksInRow) {
-        if (hasTimeOverlap(task, taskInRow, timeScale)) {
+        if (intervalsOverlap(task, taskInRow)) {
           hasConflict = true
           break
         }
@@ -140,7 +125,7 @@ export function assignTaskRows(
       rowTasks.push([task])
     }
 
-    taskRowMap.set(task.id, assignedRow)
+    taskRowMap.set(task.task.id, assignedRow)
   }
 
   // 计算每行的高度

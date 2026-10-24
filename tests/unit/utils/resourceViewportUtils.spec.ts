@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
   getBufferedWindow,
+  getBufferedLaneRange,
   getResourceTaskInterval,
+  getVisibleLaneRange,
+  reuseVisibleRange,
 } from '../../../src/utils/resourceViewportUtils'
+import { assignTaskRows } from '../../../src/utils/taskLayoutUtils'
 import type { Task } from '../../../src/models/classes/Task'
 
 describe('resource viewport buffer', () => {
@@ -51,5 +55,64 @@ describe('resource task render intervals', () => {
   })
   it('ignores invalid dates', () => {
     expect(getResourceTaskInterval({ ...task, startDate: 'invalid' }, true)).toBeNull()
+  })
+})
+
+describe('vertical resource lanes', () => {
+  it('reuses overscan during small scrolls and refills before visible lanes are lost', () => {
+    const lanes = Array.from({ length: 101 }, (_, i) => i * 60)
+    const first = getBufferedLaneRange(lanes, 1000, 1600, 120)
+    expect(getBufferedLaneRange(lanes, 1040, 1640, 120, first)).toBe(first)
+    const next = getBufferedLaneRange(lanes, 1120, 1720, 120, first)
+    expect(next).not.toBe(first)
+    expect(lanes[next.startIndex]).toBeLessThanOrEqual(1120)
+    expect(lanes[next.endIndex]).toBeGreaterThanOrEqual(1720)
+    for (const [top, bottom] of [[4000, 4600], [0, 600], [1120, 2500], [1120, 1200]]) {
+      const range = getBufferedLaneRange(lanes, top, bottom, 120, next)
+      expect(lanes[range.startIndex]).toBeLessThanOrEqual(top)
+      expect(lanes[range.endIndex]).toBeGreaterThanOrEqual(bottom)
+      expect(range.endIndex - range.startIndex).toBeLessThanOrEqual(Math.ceil((bottom - top + 480) / 60))
+    }
+    expect(getBufferedLaneRange([0], 0, 600, 120, first)).toEqual({ startIndex: 0, endIndex: 0 })
+  })
+
+  const offsets = [0, 60, 115, 188, 243]
+  it('keeps partial lanes and their titles, including exact boundaries', () => {
+    expect(getVisibleLaneRange(offsets, 61, 120)).toEqual({ startIndex: 1, endIndex: 3 })
+    expect(getVisibleLaneRange(offsets, 60, 115)).toEqual({ startIndex: 0, endIndex: 3 })
+  })
+  it('reuses unchanged ranges and updates immediately on jumps, reverse scroll and resize', () => {
+    const first = getVisibleLaneRange(offsets, 62, 120)
+    expect(getVisibleLaneRange(offsets, 65, 125, first)).toBe(first)
+    expect(getVisibleLaneRange(offsets, 200, 250, first)).toEqual({ startIndex: 3, endIndex: 4 })
+    expect(getVisibleLaneRange(offsets, -100, 20, first)).toEqual({ startIndex: 0, endIndex: 1 })
+    expect(getVisibleLaneRange(offsets, 65, 250, first)).toEqual({ startIndex: 1, endIndex: 4 })
+    expect(reuseVisibleRange(1, 3, first)).toBe(first)
+  })
+  it('handles empty and entirely offscreen resources without changing their layout', () => {
+    expect(getVisibleLaneRange([0], 0, 600)).toEqual({ startIndex: 0, endIndex: 0 })
+    expect(getVisibleLaneRange(offsets, 300, 900)).toEqual({ startIndex: 4, endIndex: 4 })
+    expect(getVisibleLaneRange(offsets, -900, -300)).toEqual({ startIndex: 0, endIndex: 0 })
+    expect(offsets).toEqual([0, 60, 115, 188, 243])
+  })
+  it('retains zero-duration tasks in independently stacked lanes', () => {
+    const tasks = Array.from({ length: 100 }, (_, id) => ({
+      id,
+      startDate: '2026-03-24 11:46:31',
+      endDate: '2026-03-24 11:46:31',
+    })) as Task[]
+    const layout = assignTaskRows(tasks, 60, 'hour', false)
+    const positions = [0]
+    for (const height of layout.rowHeights) positions.push(positions.at(-1)! + height)
+    const range = getVisibleLaneRange(positions, 2000, 2600)
+    const rendered = tasks.filter(task => {
+      const lane = layout.taskRowMap.get(task.id)!
+      return lane >= range.startIndex && lane < range.endIndex
+    })
+    expect(rendered.length).toBeGreaterThan(0)
+    expect(rendered.length).toBeLessThan(15)
+    expect(rendered.every(task => task.startDate === task.endDate)).toBe(true)
+    expect(layout.totalHeight).toBe(5505)
+    expect(layout.taskRowMap.size).toBe(100)
   })
 })

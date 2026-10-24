@@ -71,6 +71,8 @@ const messages = {
     // 其他
     milestone: '里程碑',
     targetDate: '目标日期',
+    previousResourceTask: '定位左侧最近任务',
+    nextResourceTask: '定位右侧最近任务',
     today: '今天',
     // 里程碑对话框
     milestoneDetails: '里程碑详情',
@@ -450,6 +452,8 @@ const messages = {
     milestone: 'Milestone',
     today: 'Today',
     targetDate: 'Target Date',
+    previousResourceTask: 'Locate nearest task to the left',
+    nextResourceTask: 'Locate nearest task to the right',
     // 里程碑对话框
     milestoneDetails: 'Milestone Details',
     milestoneName: 'Milestone Name',

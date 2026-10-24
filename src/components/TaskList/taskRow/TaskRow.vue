@@ -137,12 +137,20 @@ const isResourceRow = computed(() => {
   return viewMode.value === 'resource' && 'tasks' in props.task
 })
 
-// v1.9.0 检测资源是否超载（任务重叠）
+const showConflicts = inject<ComputedRef<boolean>>(
+  'gantt-show-conflicts',
+  computed(() => true)
+)
+const resourceConflicts =
+  inject<ComputedRef<Map<string, Set<number | string>>>>('resourceConflicts')
+
+// Share the chart's detection result; standalone rows retain their original fallback.
 const isResourceOverloadedComputed = computed(() => {
-  if (!isResourceRow.value) return false
+  if (!showConflicts.value || !isResourceRow.value) return false
 
   // 类型断言为Resource
   const resource = props.task as Resource
+  if (resourceConflicts) return !!resourceConflicts.value.get(String(resource.id))?.size
   return isResourceOverloaded(resource)
 })
 
