@@ -4270,7 +4270,8 @@ const getDatePixelOffset = (date: Date | string): number => {
   if (currentTimeScale.value === TimelineScale.HOUR) {
     // 小时视图：精确到小时的定位
     const targetHour = targetDate.getHours()
-    const targetMinute = targetDate.getMinutes()
+    const targetMinute =
+      targetDate.getMinutes() + targetDate.getSeconds() / 60 + targetDate.getMilliseconds() / 60000
 
     // 基础天数偏移（到目标日0点的位置）
     const baseDayPosition = daysDiff * dayWidth.value

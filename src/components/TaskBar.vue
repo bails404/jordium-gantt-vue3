@@ -24,6 +24,7 @@ import { DEFAULT_TASK_BAR_CONFIG } from '../models/configs/TaskBarConfig'
 import type { PositionCache } from '../utils/positionCache' // v1.9.6 Phase1 位置计算缓存
 import { getEffectiveEndDateOnly } from '../utils/dateBoundaryUtils' // v1.13.5 endDate带time部分时的有效日期边界计算
 import { observeElementSizes } from '../utils/sharedResizeObserver'
+import { getResourceTaskInterval, projectResourceTime } from '../utils/resourceViewportUtils'
 
 // 禁用自动继承attributes，手动应用到wrapper
 defineOptions({
@@ -610,8 +611,42 @@ const taskBarStyle = computed(() => {
   let left = 0
   let width = 0
 
-  // 任务视图拖拽时，直接使用像素位置驱动 left，避免「像素→日期→像素」往返导致的顿挫感
-  if (viewMode.value !== 'resource' && isDragging.value && taskDragPixelLeft.value !== null) {
+  // 资源视图绘制与分行共用精确时间边界，拖拽时仍优先使用实时像素位置。
+  if (viewMode.value === 'resource') {
+    const interval = getResourceTaskInterval({
+      ...props.task,
+      startDate: currentStartDate,
+      endDate: currentEndDate,
+    })
+    if (interval) {
+      const baseDay = new Date(renderBaseStart)
+      baseDay.setHours(0, 0, 0, 0)
+      const positionAt = (timestamp: number) => {
+        if (props.currentTimeScale === TimelineScale.HOUR)
+          return ((timestamp - baseDay.getTime()) / 86400000) * dayWidth
+        const dayPosition = (value: Date) => {
+          const cached = props.currentTimeScale
+            ? positionCache?.getPosition(value, props.currentTimeScale)
+            : null
+          if (cached != null) return cached
+          if (props.timelineData && props.currentTimeScale)
+            return calculatePositionFromTimelineData(
+              value,
+              props.timelineData,
+              props.currentTimeScale
+            )
+          return Math.round((value.getTime() - baseDay.getTime()) / 86400000) * dayWidth
+        }
+        return projectResourceTime(timestamp, dayPosition)
+      }
+      const start = positionAt(interval[0])
+      const end = positionAt(interval[1])
+      left = tempTaskPixelLeft.value ?? start
+      // 正时长不强制撑到4px，避免低倍率下相邻短任务相互覆盖；零时长保留定位标记。
+      width = interval[0] === interval[1] ? 4 : Math.max(0, end - start)
+    }
+  } else if (isDragging.value && taskDragPixelLeft.value !== null) {
+    // 任务视图拖拽直接使用像素位置，避免像素与日期往返换算。
     left = taskDragPixelLeft.value
     const startDate = createLocalDate(currentStartDate)
     const endDate = createLocalDate(currentEndDate)
@@ -628,39 +663,6 @@ const taskBarStyle = computed(() => {
       width = duration * dayWidth
     } else {
       width = dayWidth
-    }
-    // v1.9.0 资源视图拖拽时，优先使用精确的像素位置
-  } else if (viewMode.value === 'resource' && tempTaskPixelLeft.value !== null) {
-    left = tempTaskPixelLeft.value
-    if (props.currentTimeScale === TimelineScale.HOUR) {
-      // 小时视图：宽度按分钟精度计算，与拖拽时的日期换算保持一致
-      const startDate = createLocalDate(currentStartDate)
-      const endDate = createLocalDate(currentEndDate)
-      if (startDate && endDate) {
-        const durationMinutes = getMinutesDiff(startDate, endDate)
-        const pixelPerMinute = props.dayWidth / (24 * 60)
-        width = Math.max(4, durationMinutes * pixelPerMinute)
-      } else {
-        width = props.dayWidth / 24 // 默认1小时宽度
-      }
-    } else {
-      // 非小时视图：计算宽度（基于日期）
-      const startDate = createLocalDate(currentStartDate)
-      const endDate = createLocalDate(currentEndDate)
-      if (startDate && endDate) {
-        const startDateOnly = new Date(
-          startDate.getFullYear(),
-          startDate.getMonth(),
-          startDate.getDate()
-        )
-        const endDateOnly = getEffectiveEndDateOnly(currentEndDate, endDate)
-        const timeDiffMs = endDateOnly.getTime() - startDateOnly.getTime()
-        const daysDiff = Math.round(timeDiffMs / (1000 * 60 * 60 * 24))
-        const duration = daysDiff === 0 ? 1 : daysDiff + 1
-        width = duration * props.dayWidth
-      } else {
-        width = props.dayWidth // 默认宽度
-      }
     }
   } else if (props.currentTimeScale === TimelineScale.HOUR) {
     // 小时视图：按分钟精确计算位置（需要考虑时间部分）
@@ -4528,6 +4530,8 @@ const handleAnchorDragEnd = (anchorEvent: {
 /* v1.9.1 资源视图TaskBar全高度占比设计 */
 .task-bar.resource-view {
   display: flex;
+  box-sizing: border-box;
+  min-width: 0;
   align-items: center;
   justify-content: center;
   background: transparent !important;
@@ -5710,6 +5714,10 @@ const handleAnchorDragEnd = (anchorEvent: {
   min-width: 4px; /* 确保即使很短的任务也有最小可见宽度 */
   border-width: 1px;
   /*border-radius: 2px;*/
+}
+
+.task-bar.resource-view.week-view {
+  min-width: 0;
 }
 
 /* 暗色主题下的短TaskBar溢出效果 */

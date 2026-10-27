@@ -42,10 +42,10 @@ describe('resource task render intervals', () => {
       Date.parse(task.endDate!),
     ])
   })
-  it('includes the full rendered cells at day scale', () => {
+  it('retains exact timestamps at day scale too', () => {
     expect(getResourceTaskInterval(task, false)).toEqual([
-      new Date(2026, 10, 19).getTime(),
-      new Date(2026, 10, 22).getTime(),
+      Date.parse(task.startDate!),
+      Date.parse(task.endDate!),
     ])
   })
   it('does not add a phantom day for a task ending at midnight', () => {
@@ -55,6 +55,13 @@ describe('resource task render intervals', () => {
   })
   it('ignores invalid dates', () => {
     expect(getResourceTaskInterval({ ...task, startDate: 'invalid' }, true)).toBeNull()
+  })
+  it('retains date-only whole days in local time at either scale', () => {
+    for (const hourly of [true, false]) {
+      expect(
+        getResourceTaskInterval({ ...task, startDate: '2026-10-25', endDate: '2026-10-25' }, hourly)
+      ).toEqual([new Date(2026, 9, 25).getTime(), new Date(2026, 9, 26).getTime()])
+    }
   })
 })
 
@@ -67,11 +74,18 @@ describe('vertical resource lanes', () => {
     expect(next).not.toBe(first)
     expect(lanes[next.startIndex]).toBeLessThanOrEqual(1120)
     expect(lanes[next.endIndex]).toBeGreaterThanOrEqual(1720)
-    for (const [top, bottom] of [[4000, 4600], [0, 600], [1120, 2500], [1120, 1200]]) {
+    for (const [top, bottom] of [
+      [4000, 4600],
+      [0, 600],
+      [1120, 2500],
+      [1120, 1200],
+    ]) {
       const range = getBufferedLaneRange(lanes, top, bottom, 120, next)
       expect(lanes[range.startIndex]).toBeLessThanOrEqual(top)
       expect(lanes[range.endIndex]).toBeGreaterThanOrEqual(bottom)
-      expect(range.endIndex - range.startIndex).toBeLessThanOrEqual(Math.ceil((bottom - top + 480) / 60))
+      expect(range.endIndex - range.startIndex).toBeLessThanOrEqual(
+        Math.ceil((bottom - top + 480) / 60)
+      )
     }
     expect(getBufferedLaneRange([0], 0, 600, 120, first)).toEqual({ startIndex: 0, endIndex: 0 })
   })

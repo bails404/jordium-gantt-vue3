@@ -1,47 +1,33 @@
 import type { Task } from '../models/classes/Task'
-import { getEffectiveEndDateOnly } from './dateBoundaryUtils'
+import { getResourceTaskInterval } from './resourceViewportUtils'
 
 /**
  * v1.9.0 任务布局工具函数
  * 用于处理资源视图下的任务换行布局
  */
 
-// 15分钟毫秒数（小时视图精度单位）
-const FIFTEEN_MINUTES_MS = 15 * 60 * 1000
-
 /**
  * 检测两个任务是否存在时间交集
  * 注意：endDate包含当天，所以 task1(2025-01-28~2025-01-29) 和 task2(2025-01-29~2025-01-30)
  * 在 2025-01-29 这天是重叠的，应该换行显示
- * @param timeScale 当前时间刻度，小时视图('hour')下使用15分钟精度判断
+ * 带具体时间的任务按真实的 [start, end) 比较，所有刻度下首尾衔接均不重叠。
+ * @param timeScale 保留调用兼容性，刻度不改变时间边界
  */
 export function hasTimeOverlap(task1: Task, task2: Task, timeScale?: string): boolean {
   return intervalsOverlap(prepareLayoutTask(task1, timeScale), prepareLayoutTask(task2, timeScale))
 }
 
 // Parse once per task when laying out a resource, rather than on every pair comparison.
-function prepareLayoutTask(task: Task, timeScale?: string) {
-  const startDate = task.startDate ? new Date(task.startDate) : null
-  const endDate = task.endDate ? new Date(task.endDate) : null
-  const sortStart = startDate?.getTime() ?? 0
-  let start = NaN
-  let end = NaN
-  if (startDate && endDate) {
-    if (timeScale === 'hour') {
-      start = Math.floor(sortStart / FIFTEEN_MINUTES_MS) * FIFTEEN_MINUTES_MS
-      end = Math.ceil(endDate.getTime() / FIFTEEN_MINUTES_MS) * FIFTEEN_MINUTES_MS
-    } else {
-      start = sortStart
-      // Preserve date-only/inclusive and explicit midnight end-date semantics.
-      end = getEffectiveEndDateOnly(task.endDate, endDate).getTime() + 24 * 60 * 60 * 1000
-    }
-  }
+function prepareLayoutTask(task: Task, _timeScale?: string) {
+  const interval = task.startDate && task.endDate ? getResourceTaskInterval(task) : null
+  const [start, end] = interval ?? [NaN, NaN]
+  const sortStart = Number.isFinite(start) ? start : 0
   return { task, sortStart, start, end }
 }
 
 type LayoutTask = ReturnType<typeof prepareLayoutTask>
 function intervalsOverlap(a: LayoutTask, b: LayoutTask): boolean {
-  return a.end > b.start && b.end > a.start
+  return a.end > a.start && b.end > b.start && a.end > b.start && b.end > a.start
 }
 
 /**

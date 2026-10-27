@@ -1,5 +1,5 @@
 import type { Task } from '../models/classes/Task'
-import { getEffectiveEndDateOnly } from './dateBoundaryUtils'
+import { parseTaskDate } from './taskPositionUtils'
 
 export interface VisibleRange {
   startIndex: number
@@ -17,7 +17,7 @@ export function getVisibleLaneRange(
   offsets: number[],
   top: number,
   bottom: number,
-  previous?: VisibleRange,
+  previous?: VisibleRange
 ): VisibleRange {
   const count = offsets.length - 1
   let low = 0
@@ -51,7 +51,7 @@ export function getBufferedLaneRange(
   top: number,
   bottom: number,
   padding: number,
-  previous?: VisibleRange,
+  previous?: VisibleRange
 ): VisibleRange {
   if (previous && previous.startIndex < previous.endIndex && previous.endIndex < offsets.length) {
     const start = offsets[previous.startIndex]
@@ -73,7 +73,7 @@ export function getBufferedWindow(
   left: number,
   width: number,
   screens: number,
-  previous?: BufferedWindow,
+  previous?: BufferedWindow
 ): BufferedWindow {
   const guard = Math.min(0.5, screens) * width
   if (
@@ -92,14 +92,30 @@ export function getBufferedWindow(
   }
 }
 
-// 与任务条的显示范围一致：小时刻度保留时分，日刻度覆盖整个日期单元格。
-export function getResourceTaskInterval(task: Task, hourly: boolean): [number, number] | null {
-  const start = new Date(task.startDate || task.endDate || '')
-  const end = new Date(task.endDate || task.startDate || '')
-  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime())) return null
-  if (hourly) return [start.getTime(), end.getTime()]
-  start.setHours(0, 0, 0, 0)
-  const endDay = getEffectiveEndDateOnly(task.endDate || task.startDate, end)
-  endDay.setDate(endDay.getDate() + 1)
-  return [start.getTime(), endDay.getTime()]
+// 所有刻度使用真实的左闭右开区间；只有纯日期结束值包含当天。
+// 保留 hourly 参数兼容已有调用，刻度不再改变资源占用语义。
+export function getResourceTaskInterval(task: Task, _hourly?: boolean): [number, number] | null {
+  const rawStart = task.startDate || task.endDate
+  const rawEnd = task.endDate || task.startDate
+  const start = parseTaskDate(rawStart)
+  const parsedEnd = parseTaskDate(rawEnd)
+  if (!start || !parsedEnd) return null
+  const end = new Date(parsedEnd)
+  if (typeof rawEnd === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(rawEnd.trim())) {
+    end.setDate(end.getDate() + 1)
+  }
+  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || end < start)
+    return null
+  return [start.getTime(), end.getTime()]
+}
+
+// 非小时刻度在相邻日期坐标间插值，让绘制和视野外任务定位保留时分秒。
+export function projectResourceTime(timestamp: number, projectDay: (date: Date) => number): number {
+  const date = new Date(timestamp)
+  const day = new Date(date.getFullYear(), date.getMonth(), date.getDate())
+  const next = new Date(day)
+  next.setDate(next.getDate() + 1)
+  const start = projectDay(day)
+  const end = projectDay(next)
+  return start + ((timestamp - day.getTime()) / (next.getTime() - day.getTime())) * (end - start)
 }

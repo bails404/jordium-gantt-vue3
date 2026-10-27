@@ -1,5 +1,5 @@
 import type { Task } from '../models/classes/Task'
-import { getResourceTaskInterval } from './resourceViewportUtils'
+import { getResourceTaskInterval, projectResourceTime } from './resourceViewportUtils'
 
 export interface ResourceNavigationItem {
   task: Task
@@ -22,8 +22,10 @@ export function getResourceNavigationItems(
     if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) continue
     const interval = getResourceTaskInterval(task, hourly)
     if (!interval) continue
-    const left = project(new Date(interval[0]))
-    const right = Math.max(left + 4, project(new Date(interval[1])))
+    const projectTime = (time: number) =>
+      hourly ? project(new Date(time)) : projectResourceTime(time, project)
+    const left = projectTime(interval[0])
+    const right = interval[0] === interval[1] ? left + 4 : projectTime(interval[1])
     items.push({ task, start, end, left, right })
   }
   return items

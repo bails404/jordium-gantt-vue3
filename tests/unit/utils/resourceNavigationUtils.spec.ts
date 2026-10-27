@@ -47,9 +47,10 @@ describe('resource offscreen task navigation', () => {
     expect(getResourceNavigationTargets(items, 102, 500).left?.task.id).toBe(1)
   })
 
-  it('uses entire displayed date cells at day scale for zero-duration tasks', () => {
+  it('uses the exact marker position at day scale for zero-duration tasks', () => {
     const items = getResourceNavigationItems([task(1, 706)], false, project)
-    expect(getResourceNavigationTargets(items, 1000, 1500).left).toBeUndefined()
+    expect(getResourceNavigationTargets(items, 709, 1500).left).toBeUndefined()
+    expect(getResourceNavigationTargets(items, 710, 1500).left?.task.id).toBe(1)
     expect(getResourceNavigationTargets(items, 1440, 2000).left?.task.id).toBe(1)
   })
 

@@ -9,6 +9,7 @@
 import { describe, it, expect } from 'vitest'
 import { assignTaskRows, hasTimeOverlap } from '../../../src/utils/taskLayoutUtils'
 import type { Task } from '../../../src/models/classes/Task'
+import { parseTaskDate } from '../../../src/utils/taskPositionUtils'
 
 describe('taskLayoutUtils', () => {
   describe('cached layout intervals', () => {
@@ -30,8 +31,8 @@ describe('taskLayoutUtils', () => {
         const expected = new Map<number, number>()
         const sorted = [...tasks].sort(
           (a, b) =>
-            (a.startDate ? Date.parse(a.startDate) : 0) -
-            (b.startDate ? Date.parse(b.startDate) : 0)
+            (parseTaskDate(a.startDate)?.getTime() ?? 0) -
+            (parseTaskDate(b.startDate)?.getTime() ?? 0)
         )
         for (const task of sorted) {
           let lane = lanes.findIndex(items =>
@@ -55,7 +56,7 @@ describe('taskLayoutUtils', () => {
       expect(assignTaskRows([], 60).totalHeight).toBe(60)
       expect(assignTaskRows(tasks, 60, 'hour', false).rowHeights).toHaveLength(tasks.length)
       const pair = tasks.slice(0, 2).map(task => ({ ...task }))
-      expect(assignTaskRows(pair, 60, 'hour').taskRowMap.get(1)).toBe(1)
+      expect(assignTaskRows(pair, 60, 'hour').taskRowMap.get(1)).toBe(0)
       pair[1].startDate = pair[1].endDate = '2026-03-26 11:46:31'
       expect(assignTaskRows(pair, 60, 'hour').taskRowMap.get(1)).toBe(0)
     })
@@ -121,7 +122,7 @@ describe('taskLayoutUtils', () => {
       expect(hasTimeOverlap(taskA, taskB)).toBe(true)
     })
 
-    it('小时视图：按15分钟精度判断，不受日期边界规则影响', () => {
+    it('小时视图：首尾相接不重叠', () => {
       const taskA: Task = {
         id: 1,
         name: 'A',
@@ -150,4 +151,53 @@ describe('taskLayoutUtils', () => {
       expect(hasTimeOverlap(taskA, taskB)).toBe(false)
     })
   })
+
+  describe.each(['hour', 'day', 'week', 'month', 'quarter', 'year'])(
+    'exact intervals at %s scale',
+    scale => {
+      const task = (id: number, startDate: string, endDate: string): Task => ({
+        id,
+        name: String(id),
+        startDate,
+        endDate,
+      })
+      const first = task(1, '2026-10-25 10:24:00', '2026-10-25 11:25:00')
+      it.each(['11:25:00', '11:25:01', '11:26:00'])(
+        'keeps a task starting at %s in the same lane',
+        start => {
+          const second = task(2, `2026-10-25 ${start}`, '2026-10-25 11:48:00')
+          expect(hasTimeOverlap(first, second, scale)).toBe(false)
+          expect([...assignTaskRows([second, first], 60, scale).taskRowMap.values()]).toEqual([
+            0, 0,
+          ])
+        }
+      )
+      it('splits a one-second overlap and nested tasks, then reuses the first free lane', () => {
+        const second = task(2, '2026-10-25 11:24:59', '2026-10-25 11:48:00')
+        const nested = task(3, '2026-10-25 11:24:59', '2026-10-25 11:25:00')
+        const following = task(4, '2026-10-25 11:25:00', '2026-10-25 11:30:00')
+        expect(hasTimeOverlap(first, second, scale)).toBe(true)
+        expect([
+          ...assignTaskRows([first, second, nested, following], 60, scale).taskRowMap.values(),
+        ]).toEqual([0, 1, 2, 0])
+      })
+      it.each(['2026-10-26 00:00:00', '2026-10-26T00:00:00', '2026-10-26 00:00:01'])(
+        'keeps a cross-midnight boundary at %s exact',
+        boundary => {
+          const pair = [
+            task(1, '2026-10-25 23:50:00', boundary),
+            task(2, boundary, '2026-10-26 00:10:00'),
+          ]
+          expect([...assignTaskRows(pair, 60, scale).taskRowMap.values()]).toEqual([0, 0])
+        }
+      )
+      it('preserves inclusive date-only ends and treats zero duration as an empty interval', () => {
+        const allDay = task(2, '2026-10-25', '2026-10-25')
+        const point = task(3, '2026-10-25 11:00:00', '2026-10-25 11:00:00')
+        expect(hasTimeOverlap(first, allDay, scale)).toBe(true)
+        expect(hasTimeOverlap(first, point, scale)).toBe(false)
+        expect(hasTimeOverlap(allDay, task(4, '2026-10-26', '2026-10-26'), scale)).toBe(false)
+      })
+    }
+  )
 })
